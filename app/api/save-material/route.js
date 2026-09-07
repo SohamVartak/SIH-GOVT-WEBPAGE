@@ -41,23 +41,50 @@ export async function POST(request) {
     );
 
     // ==========================================
-    // READ REQUEST
+    // READ MULTIPART FORM DATA
     // ==========================================
 
-    const body = await request.json();
+    const formData = await request.formData();
 
-    const {
-      company,
-      fileName,
-      structuredData,
-    } = body;
+    const file = formData.get("file");
+    const company = formData.get("company");
+    const fileName = formData.get("fileName");
 
-    if (!company || !structuredData) {
+    const structuredDataText =
+      formData.get("structuredData");
+
+    if (!file) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "No file received.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!company || !structuredDataText) {
       return NextResponse.json(
         {
           success: false,
           error:
             "Company and structured data are required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    let structuredData;
+
+    try {
+      structuredData =
+        JSON.parse(structuredDataText);
+    } catch (error) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid structured data JSON.",
         },
         { status: 400 }
       );
@@ -104,7 +131,60 @@ export async function POST(request) {
     const companyData = companyResults[0];
 
     // ==========================================
-    // 2. CREATE DATASHEET RECORD
+    // 2. UPLOAD ORIGINAL FILE TO STORAGE
+    // ==========================================
+
+    const originalFileName =
+      fileName ||
+      file.name ||
+      "datasheet.pdf";
+
+    const safeFileName =
+      originalFileName
+        .replace(/[^a-zA-Z0-9._-]/g, "_");
+
+    const timestamp =
+      Date.now();
+
+    const storagePath =
+      `${companyData.company_name}/${timestamp}-${safeFileName}`;
+
+    const fileBuffer =
+      new Uint8Array(
+        await file.arrayBuffer()
+      );
+
+    const {
+      error: storageError,
+    } = await supabase.storage
+      .from("datasheets")
+      .upload(
+        storagePath,
+        fileBuffer,
+        {
+          contentType:
+            file.type ||
+            "application/pdf",
+
+          upsert: false,
+        }
+      );
+
+    if (storageError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Failed to upload original file to Supabase Storage.",
+          details:
+            storageError.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    // ==========================================
+    // 3. CREATE DATASHEET RECORD
     // ==========================================
 
     const {
@@ -117,15 +197,27 @@ export async function POST(request) {
           companyData.company_id,
 
         file_name:
-          fileName || null,
+          originalFileName,
+
+        file_path:
+          storagePath,
 
         file_type:
-          "pdf",
+          file.type ||
+          "application/pdf",
+
+        extraction_status:
+          "completed",
       })
       .select()
       .single();
 
     if (datasheetError) {
+      // Try to remove the uploaded file
+      await supabase.storage
+        .from("datasheets")
+        .remove([storagePath]);
+
       return NextResponse.json(
         {
           success: false,
@@ -139,7 +231,7 @@ export async function POST(request) {
     }
 
     // ==========================================
-    // 3. CREATE COMPANY MATERIAL
+    // 4. CREATE COMPANY MATERIAL
     // ==========================================
 
     const {
@@ -183,7 +275,7 @@ export async function POST(request) {
     }
 
     // ==========================================
-    // 4. CREATE MATERIAL ATTRIBUTES
+    // 5. CREATE MATERIAL ATTRIBUTES
     // ==========================================
 
     const dimensions =
@@ -261,7 +353,7 @@ export async function POST(request) {
       success: true,
 
       message:
-        "Material saved successfully.",
+        "Material and original datasheet saved successfully.",
 
       data: {
         company_id:
@@ -275,6 +367,9 @@ export async function POST(request) {
 
         material_id:
           material.material_id,
+
+        storage_path:
+          storagePath,
       },
     });
 

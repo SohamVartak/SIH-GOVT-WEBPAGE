@@ -10,37 +10,61 @@ export default function TestUploadPage() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
 
-  const handleFile = (selectedFile) => {
-    if (!selectedFile) return;
+  // ==========================================
+  // FILE SELECTION
+  // ==========================================
+
+  const handleFileSelect = (selectedFile) => {
+    setError("");
+    setResult(null);
+
+    if (!selectedFile) {
+      return;
+    }
 
     const fileName = selectedFile.name.toLowerCase();
 
-    if (
-      !fileName.endsWith(".pdf") &&
-      !fileName.endsWith(".xlsx") &&
-      !fileName.endsWith(".xls")
-    ) {
-      setError("Please upload a PDF or Excel file.");
-      setFile(null);
+    const isValid =
+      fileName.endsWith(".pdf") ||
+      fileName.endsWith(".xlsx") ||
+      fileName.endsWith(".xls");
+
+    if (!isValid) {
+      setError(
+        "Unsupported file type. Please upload a PDF or Excel file."
+      );
       return;
     }
 
     setFile(selectedFile);
-    setError("");
-    setResult(null);
-    setStage("");
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
+  // ==========================================
+  // DRAG AND DROP
+  // ==========================================
+
+  const handleDragOver = (event) => {
+    event.preventDefault();
+    setDragging(true);
+  };
+
+  const handleDragLeave = (event) => {
+    event.preventDefault();
+    setDragging(false);
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
     setDragging(false);
 
-    const droppedFile = e.dataTransfer.files?.[0];
+    const droppedFile = event.dataTransfer.files?.[0];
 
-    if (droppedFile) {
-      handleFile(droppedFile);
-    }
+    handleFileSelect(droppedFile);
   };
+
+  // ==========================================
+  // MAIN PROCESS
+  // ==========================================
 
   const extractAndStructure = async () => {
     if (!file) {
@@ -59,979 +83,1260 @@ export default function TestUploadPage() {
 
       setStage("Extracting datasheet...");
 
-      const formData = new FormData();
-      formData.append("file", file);
+      const extractFormData = new FormData();
 
-      const extractResponse = await fetch("/api/extract", {
-        method: "POST",
-        body: formData,
-      });
+      extractFormData.append("file", file);
 
-      const extractData = await extractResponse.json();
+      const extractResponse = await fetch(
+        "/api/extract",
+        {
+          method: "POST",
+          body: extractFormData,
+        }
+      );
 
-      if (!extractResponse.ok || !extractData.success) {
+      const extractData =
+        await extractResponse.json();
+
+      if (
+        !extractResponse.ok ||
+        !extractData.success
+      ) {
         throw new Error(
           extractData.details ||
             extractData.error ||
-            "File extraction failed."
+            "Failed to extract datasheet."
         );
       }
 
       // ==========================================
-      // STEP 2 — AI STRUCTURING
+      // STEP 2 — EXCEL
       // ==========================================
 
-      if (extractData.fileType === "pdf") {
-        if (!extractData.text) {
-          throw new Error(
-            "No text could be extracted from the PDF."
-          );
-        }
-
-        setStage("Analysing datasheet with AI...");
-
-        const aiResponse = await fetch("/api/ai-structure", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            text: extractData.text,
-          }),
-        });
-
-        const aiData = await aiResponse.json();
-
-        if (!aiResponse.ok || !aiData.success) {
-          throw new Error(
-            aiData.details ||
-              aiData.error ||
-              "AI structuring failed."
-          );
-        }
-
-        // ==========================================
-        // STEP 3 — SAVE TO SUPABASE
-        // ==========================================
-
-        setStage("Saving material to database...");
-
-        const saveResponse = await fetch(
-          "/api/save-material",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              company: aiData.data.company,
-              fileName: file.name,
-              structuredData: aiData.data,
-            }),
-          }
-        );
-
-        const saveData = await saveResponse.json();
-
-        if (!saveResponse.ok || !saveData.success) {
-          throw new Error(
-            saveData.details ||
-              saveData.error ||
-              "Failed to save material to database."
-          );
-        }
-
-        // ==========================================
-        // SUCCESS
-        // ==========================================
-
-        setStage("Completed");
-
-        setResult({
-          ...aiData.data,
-          database: saveData.data,
-        });
-      }
-
-      // ==========================================
-      // EXCEL
-      // ==========================================
-
-      else if (extractData.fileType === "excel") {
+      if (
+        extractData.fileType === "excel"
+      ) {
         setStage("Excel extracted successfully.");
 
         setResult({
-          source_type: "excel",
-          file_name: extractData.fileName,
+          type: "excel",
+          fileName: file.name,
           sheets: extractData.sheets,
         });
+
+        setLoading(false);
+        return;
       }
+
+      // ==========================================
+      // STEP 3 — AI STRUCTURING
+      // ==========================================
+
+      setStage(
+        "AI is analysing the technical datasheet..."
+      );
+
+      const aiResponse = await fetch(
+        "/api/ai-structure",
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json",
+          },
+
+          body: JSON.stringify({
+            text: extractData.text,
+          }),
+        }
+      );
+
+      const aiData =
+        await aiResponse.json();
+
+      if (
+        !aiResponse.ok ||
+        !aiData.success
+      ) {
+        throw new Error(
+          aiData.details ||
+            aiData.error ||
+            "AI failed to structure the datasheet."
+        );
+      }
+
+      // ==========================================
+      // STEP 4 — SAVE FILE + DATA
+      // ==========================================
+
+      setStage(
+        "Saving original file and material data..."
+      );
+
+      const saveFormData =
+        new FormData();
+
+      // Original uploaded PDF
+      saveFormData.append(
+        "file",
+        file
+      );
+
+      // Company identified by AI
+      saveFormData.append(
+        "company",
+        aiData.data.company
+      );
+
+      // Original filename
+      saveFormData.append(
+        "fileName",
+        file.name
+      );
+
+      // Structured AI data
+      saveFormData.append(
+        "structuredData",
+        JSON.stringify(
+          aiData.data
+        )
+      );
+
+      const saveResponse =
+        await fetch(
+          "/api/save-material",
+          {
+            method: "POST",
+            body: saveFormData,
+          }
+        );
+
+      const saveData =
+        await saveResponse.json();
+
+      if (
+        !saveResponse.ok ||
+        !saveData.success
+      ) {
+        throw new Error(
+          saveData.details ||
+            saveData.error ||
+            "Failed to save material to database."
+        );
+      }
+
+      // ==========================================
+      // SUCCESS
+      // ==========================================
+
+      setStage(
+        "Material saved successfully."
+      );
+
+      setResult({
+        type: "pdf",
+        fileName: file.name,
+        extractedText: extractData.text,
+        structuredData: aiData.data,
+        savedData: saveData.data,
+      });
+
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Upload processing error:",
+        err
+      );
 
       setError(
         err?.message ||
           "Something went wrong while processing the file."
       );
-
-      setStage("");
     } finally {
       setLoading(false);
     }
   };
 
+  // ==========================================
+  // RESET
+  // ==========================================
+
+  const resetUpload = () => {
+    setFile(null);
+    setResult(null);
+    setError("");
+    setStage("");
+    setLoading(false);
+  };
+
+  // ==========================================
+  // FORMAT JSON
+  // ==========================================
+
+  const formatJSON = (data) => {
+    try {
+      return JSON.stringify(
+        data,
+        null,
+        2
+      );
+    } catch {
+      return String(data);
+    }
+  };
+
+  // ==========================================
+  // UI
+  // ==========================================
+
   return (
-    <main className="page">
-      <style jsx>{`
-        * {
-          box-sizing: border-box;
-        }
+    <main
+      style={{
+        minHeight: "100vh",
+        background:
+          "linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%)",
+        fontFamily:
+          "Arial, Helvetica, sans-serif",
+        color: "#172033",
+      }}
+    >
+      {/* ==========================================
+          HEADER
+      ========================================== */}
 
-        .page {
-          min-height: 100vh;
-          background:
-            linear-gradient(
-              rgba(255, 255, 255, 0.96),
-              rgba(255, 255, 255, 0.96)
-            ),
-            linear-gradient(
-              90deg,
-              rgba(255, 153, 51, 0.08),
-              transparent 35%,
-              transparent 65%,
-              rgba(19, 136, 8, 0.08)
-            );
-          color: #17202a;
-          font-family:
-            Arial,
-            Helvetica,
-            sans-serif;
-        }
-
-        .topbar {
-          height: 6px;
-          background: linear-gradient(
-            90deg,
-            #ff9933 0%,
-            #ff9933 33%,
-            #ffffff 33%,
-            #ffffff 66%,
-            #138808 66%,
-            #138808 100%
-          );
-          border-bottom: 1px solid #ddd;
-        }
-
-        .header {
-          background: #ffffff;
-          border-bottom: 1px solid #dfe4ea;
-          padding: 18px 6%;
-        }
-
-        .headerInner {
-          max-width: 1200px;
-          margin: auto;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 20px;
-        }
-
-        .brand {
-          display: flex;
-          align-items: center;
-          gap: 15px;
-        }
-
-        .emblem {
-          width: 54px;
-          height: 54px;
-          border: 2px solid #9da7b2;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 23px;
-          font-weight: bold;
-          color: #263746;
-        }
-
-        .brandText h1 {
-          margin: 0;
-          font-size: 22px;
-          font-weight: 700;
-        }
-
-        .brandText p {
-          margin: 4px 0 0;
-          color: #68737d;
-          font-size: 13px;
-        }
-
-        .badge {
-          padding: 8px 13px;
-          border-radius: 20px;
-          background: #eef5ff;
-          border: 1px solid #cdddf5;
-          color: #315b8a;
-          font-size: 12px;
-          font-weight: 700;
-        }
-
-        .container {
-          max-width: 1200px;
-          margin: 0 auto;
-          padding: 45px 20px 70px;
-        }
-
-        .titleSection {
-          margin-bottom: 30px;
-        }
-
-        .eyebrow {
-          color: #1c5b94;
-          font-size: 13px;
-          font-weight: 700;
-          letter-spacing: 1px;
-          text-transform: uppercase;
-          margin-bottom: 10px;
-        }
-
-        .titleSection h2 {
-          margin: 0;
-          font-size: 36px;
-          line-height: 1.15;
-        }
-
-        .titleSection p {
-          max-width: 760px;
-          margin-top: 12px;
-          color: #64707c;
-          font-size: 15px;
-          line-height: 1.7;
-        }
-
-        .pipeline {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 12px;
-          margin-bottom: 28px;
-        }
-
-        .pipelineItem {
-          background: #ffffff;
-          border: 1px solid #dce2e8;
-          border-radius: 12px;
-          padding: 15px;
-        }
-
-        .pipelineNumber {
-          font-size: 12px;
-          color: #7a858f;
-          font-weight: 700;
-        }
-
-        .pipelineTitle {
-          margin-top: 5px;
-          font-size: 14px;
-          font-weight: 700;
-        }
-
-        .uploadCard {
-          background: #ffffff;
-          border: 1px solid #d7dde3;
-          border-radius: 16px;
-          padding: 30px;
-          box-shadow: 0 8px 25px rgba(30, 45, 60, 0.06);
-        }
-
-        .dropZone {
-          border: 2px dashed #b8c1ca;
-          border-radius: 14px;
-          padding: 45px 20px;
-          text-align: center;
-          cursor: pointer;
-          transition: 0.2s;
-          background: #fbfcfd;
-        }
-
-        .dropZone:hover,
-        .dropZone.dragging {
-          border-color: #527ca7;
-          background: #f4f8fc;
-        }
-
-        .uploadIcon {
-          width: 58px;
-          height: 58px;
-          margin: 0 auto 15px;
-          border-radius: 50%;
-          background: #edf3f8;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 25px;
-        }
-
-        .dropZone h3 {
-          margin: 0;
-          font-size: 18px;
-        }
-
-        .dropZone p {
-          color: #727d87;
-          font-size: 13px;
-          margin: 9px 0;
-        }
-
-        .browse {
-          color: #1d5e95;
-          font-weight: 700;
-        }
-
-        .fileInfo {
-          margin-top: 18px;
-          padding: 15px;
-          background: #f4f7fa;
-          border: 1px solid #dce2e8;
-          border-radius: 10px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 15px;
-        }
-
-        .fileName {
-          font-weight: 700;
-          word-break: break-word;
-        }
-
-        .fileType {
-          color: #71808e;
-          font-size: 12px;
-        }
-
-        .button {
-          width: 100%;
-          margin-top: 20px;
-          padding: 15px 20px;
-          border: none;
-          border-radius: 9px;
-          background: #174f7c;
-          color: white;
-          font-size: 15px;
-          font-weight: 700;
-          cursor: pointer;
-        }
-
-        .button:hover {
-          background: #123f63;
-        }
-
-        .button:disabled {
-          cursor: not-allowed;
-          opacity: 0.6;
-        }
-
-        .status {
-          margin-top: 18px;
-          padding: 14px 16px;
-          border-radius: 9px;
-          background: #eef5fb;
-          border: 1px solid #d3e1ed;
-          color: #31566f;
-          font-size: 14px;
-        }
-
-        .error {
-          margin-top: 18px;
-          padding: 14px 16px;
-          border-radius: 9px;
-          background: #fff2f2;
-          border: 1px solid #efcaca;
-          color: #a33333;
-          font-size: 14px;
-        }
-
-        .result {
-          margin-top: 30px;
-          background: #ffffff;
-          border: 1px solid #d7dde3;
-          border-radius: 16px;
-          overflow: hidden;
-          box-shadow: 0 8px 25px rgba(30, 45, 60, 0.06);
-        }
-
-        .resultHeader {
-          padding: 20px 25px;
-          border-bottom: 1px solid #e0e5ea;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 15px;
-        }
-
-        .resultHeader h3 {
-          margin: 0;
-          font-size: 20px;
-        }
-
-        .successBadge {
-          padding: 7px 11px;
-          background: #edf8ed;
-          border: 1px solid #c8e4c8;
-          color: #28752c;
-          border-radius: 20px;
-          font-size: 12px;
-          font-weight: 700;
-        }
-
-        .resultBody {
-          padding: 25px;
-        }
-
-        .grid {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 15px;
-        }
-
-        .field {
-          border: 1px solid #e0e5e9;
-          border-radius: 10px;
-          padding: 14px;
-          background: #fafbfc;
-        }
-
-        .fieldLabel {
-          font-size: 11px;
-          color: #7a858e;
-          text-transform: uppercase;
-          letter-spacing: 0.6px;
-          font-weight: 700;
-          margin-bottom: 6px;
-        }
-
-        .fieldValue {
-          font-size: 14px;
-          line-height: 1.5;
-          font-weight: 600;
-          white-space: pre-wrap;
-          word-break: break-word;
-        }
-
-        .sectionTitle {
-          margin: 28px 0 14px;
-          font-size: 16px;
-          font-weight: 700;
-          border-bottom: 1px solid #e1e5e9;
-          padding-bottom: 8px;
-        }
-
-        .list {
-          margin: 0;
-          padding-left: 20px;
-          color: #394550;
-          line-height: 1.7;
-        }
-
-        .raw {
-          margin-top: 25px;
-        }
-
-        .raw pre {
-          background: #17202a;
-          color: #e9eef2;
-          padding: 18px;
-          border-radius: 10px;
-          overflow-x: auto;
-          font-size: 12px;
-          line-height: 1.5;
-        }
-
-        .footer {
-          border-top: 1px solid #dfe4e8;
-          background: #f7f9fa;
-          padding: 25px 20px;
-          text-align: center;
-          color: #74808b;
-          font-size: 12px;
-        }
-
-        @media (max-width: 800px) {
-          .pipeline {
-            grid-template-columns: repeat(2, 1fr);
-          }
-
-          .grid {
-            grid-template-columns: 1fr;
-          }
-
-          .headerInner {
-            align-items: flex-start;
-            flex-direction: column;
-          }
-
-          .titleSection h2 {
-            font-size: 29px;
-          }
-        }
-
-        @media (max-width: 500px) {
-          .pipeline {
-            grid-template-columns: 1fr;
-          }
-
-          .uploadCard {
-            padding: 18px;
-          }
-
-          .container {
-            padding-left: 14px;
-            padding-right: 14px;
-          }
-        }
-      `}</style>
-
-      <div className="topbar"></div>
-
-      <header className="header">
-        <div className="headerInner">
-          <div className="brand">
-            <div className="emblem">☼</div>
-
-            <div className="brandText">
-              <h1>Bharat Material Grid</h1>
-              <p>
-                Government of India · Material
-                Standardisation Platform
-              </p>
-            </div>
+      <header
+        style={{
+          background: "#ffffff",
+          borderBottom:
+            "1px solid #d8dee8",
+          padding:
+            "18px 32px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent:
+            "space-between",
+          boxShadow:
+            "0 2px 8px rgba(0,0,0,0.04)",
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: "13px",
+              fontWeight: 700,
+              color: "#666",
+              letterSpacing:
+                "0.08em",
+              textTransform:
+                "uppercase",
+            }}
+          >
+            Government of India
           </div>
 
-          <div className="badge">
-            PHASE 1 · AI MATERIAL INGESTION
+          <div
+            style={{
+              fontSize: "24px",
+              fontWeight: 800,
+              marginTop: "3px",
+            }}
+          >
+            Bharat Material Grid
           </div>
+
+          <div
+            style={{
+              fontSize: "13px",
+              color: "#687386",
+              marginTop: "3px",
+            }}
+          >
+            Industrial Material
+            Harmonization Platform
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: "4px",
+            alignItems: "center",
+          }}
+        >
+          <div
+            style={{
+              width: "70px",
+              height: "4px",
+              background: "#ff9933",
+            }}
+          />
+
+          <div
+            style={{
+              width: "70px",
+              height: "4px",
+              background: "#138808",
+            }}
+          />
         </div>
       </header>
 
-      <section className="container">
-        <div className="titleSection">
-          <div className="eyebrow">
-            Datasheet Intelligence
+      {/* ==========================================
+          CONTENT
+      ========================================== */}
+
+      <div
+        style={{
+          maxWidth: "1200px",
+          margin: "0 auto",
+          padding:
+            "50px 24px 80px",
+        }}
+      >
+        {/* TITLE */}
+
+        <div
+          style={{
+            marginBottom: "30px",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "13px",
+              color: "#667085",
+              marginBottom: "8px",
+            }}
+          >
+            DATA INGESTION
           </div>
 
-          <h2>Upload & Analyse Datasheet</h2>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: "34px",
+              fontWeight: 800,
+              letterSpacing:
+                "-0.02em",
+            }}
+          >
+            Datasheet Upload
+          </h1>
 
-          <p>
-            Upload a company material datasheet in PDF or
-            Excel format. The system extracts technical
-            information, analyses the material using AI,
-            and stores the structured material record in
-            the Bharat Material Grid database.
+          <p
+            style={{
+              marginTop: "10px",
+              color: "#667085",
+              maxWidth: "750px",
+              lineHeight: 1.7,
+            }}
+          >
+            Upload a company material
+            datasheet. The system extracts
+            the technical information,
+            analyses it using AI, and stores
+            the original document together
+            with the structured material data.
           </p>
         </div>
 
-        <div className="pipeline">
-          <div className="pipelineItem">
-            <div className="pipelineNumber">01</div>
-            <div className="pipelineTitle">
-              Upload Datasheet
-            </div>
-          </div>
+        {/* ==========================================
+            UPLOAD CARD
+        ========================================== */}
 
-          <div className="pipelineItem">
-            <div className="pipelineNumber">02</div>
-            <div className="pipelineTitle">
-              Extract Information
-            </div>
-          </div>
-
-          <div className="pipelineItem">
-            <div className="pipelineNumber">03</div>
-            <div className="pipelineTitle">
-              AI Analysis
-            </div>
-          </div>
-
-          <div className="pipelineItem">
-            <div className="pipelineNumber">04</div>
-            <div className="pipelineTitle">
-              Save to Database
-            </div>
-          </div>
-        </div>
-
-        <div className="uploadCard">
+        <section
+          style={{
+            background: "#ffffff",
+            border:
+              "1px solid #dce2ea",
+            borderRadius: "16px",
+            padding: "30px",
+            boxShadow:
+              "0 8px 30px rgba(15,23,42,0.06)",
+          }}
+        >
           <div
-            className={`dropZone ${
-              dragging ? "dragging" : ""
-            }`}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            onClick={() =>
-              document
-                .getElementById("fileInput")
-                ?.click()
-            }
+            style={{
+              border:
+                dragging
+                  ? "2px solid #1d4ed8"
+                  : "2px dashed #b8c1cf",
+
+              borderRadius: "14px",
+
+              padding:
+                "55px 25px",
+
+              textAlign: "center",
+
+              background:
+                dragging
+                  ? "#eff6ff"
+                  : "#f8fafc",
+
+              transition:
+                "all 0.2s ease",
+            }}
           >
-            <div className="uploadIcon">↑</div>
+            <div
+              style={{
+                fontSize: "42px",
+                marginBottom: "14px",
+              }}
+            >
+              ↑
+            </div>
 
-            <h3>
-              Drag & drop your datasheet here
-            </h3>
+            <h2
+              style={{
+                margin:
+                  "0 0 8px",
+                fontSize: "21px",
+              }}
+            >
+              Upload Datasheet
+            </h2>
 
-            <p>
-              or{" "}
-              <span className="browse">
-                browse from your computer
-              </span>
+            <p
+              style={{
+                margin:
+                  "0 auto 22px",
+                color: "#667085",
+                maxWidth: "550px",
+                lineHeight: 1.6,
+              }}
+            >
+              Drag and drop a PDF or Excel
+              datasheet here, or select one
+              from your computer.
             </p>
 
-            <p>
-              Supported formats: PDF, XLS, XLSX
-            </p>
+            <label
+              style={{
+                display:
+                  "inline-block",
+                padding:
+                  "12px 24px",
+                background:
+                  "#123b70",
+                color:
+                  "#ffffff",
+                borderRadius:
+                  "8px",
+                cursor:
+                  "pointer",
+                fontWeight:
+                  700,
+              }}
+            >
+              Browse File
 
-            <input
-              id="fileInput"
-              type="file"
-              accept=".pdf,.xls,.xlsx"
-              style={{ display: "none" }}
-              onChange={(e) =>
-                handleFile(e.target.files?.[0])
-              }
-            />
+              <input
+                type="file"
+                accept=".pdf,.xlsx,.xls"
+                style={{
+                  display: "none",
+                }}
+                onChange={(event) =>
+                  handleFileSelect(
+                    event.target.files?.[0]
+                  )
+                }
+              />
+            </label>
+
+            <div
+              style={{
+                marginTop: "18px",
+                fontSize: "12px",
+                color: "#7a8494",
+              }}
+            >
+              Supported formats:
+              PDF, XLS, XLSX
+            </div>
           </div>
+
+          {/* ==========================================
+              SELECTED FILE
+          ========================================== */}
 
           {file && (
-            <div className="fileInfo">
+            <div
+              style={{
+                marginTop: "22px",
+                padding: "18px",
+                background:
+                  "#f8fafc",
+                border:
+                  "1px solid #e1e6ee",
+                borderRadius:
+                  "10px",
+                display: "flex",
+                alignItems:
+                  "center",
+                justifyContent:
+                  "space-between",
+                gap: "20px",
+              }}
+            >
               <div>
-                <div className="fileName">
+                <div
+                  style={{
+                    fontSize:
+                      "13px",
+                    color:
+                      "#667085",
+                    marginBottom:
+                      "5px",
+                  }}
+                >
+                  Selected file
+                </div>
+
+                <div
+                  style={{
+                    fontWeight:
+                      700,
+                    wordBreak:
+                      "break-word",
+                  }}
+                >
                   {file.name}
                 </div>
 
-                <div className="fileType">
-                  {(file.size / 1024).toFixed(1)} KB
+                <div
+                  style={{
+                    fontSize:
+                      "12px",
+                    color:
+                      "#7a8494",
+                    marginTop:
+                      "4px",
+                  }}
+                >
+                  {(
+                    file.size /
+                    1024
+                  ).toFixed(1)}{" "}
+                  KB
                 </div>
               </div>
 
-              <div>✓</div>
+              {!loading && (
+                <button
+                  onClick={resetUpload}
+                  style={{
+                    border:
+                      "1px solid #d1d7e0",
+                    background:
+                      "#ffffff",
+                    borderRadius:
+                      "7px",
+                    padding:
+                      "9px 15px",
+                    cursor:
+                      "pointer",
+                  }}
+                >
+                  Remove
+                </button>
+              )}
             </div>
           )}
 
-          <button
-            className="button"
-            onClick={extractAndStructure}
-            disabled={!file || loading}
-          >
-            {loading
-              ? "Processing..."
-              : "Extract & Analyse Datasheet"}
-          </button>
+          {/* ==========================================
+              PROCESS BUTTON
+          ========================================== */}
 
-          {stage && (
-            <div className="status">
-              <strong>Status:</strong> {stage}
+          {file && !result && (
+            <button
+              onClick={
+                extractAndStructure
+              }
+              disabled={loading}
+              style={{
+                width: "100%",
+                marginTop: "22px",
+                padding:
+                  "15px 20px",
+                border: "none",
+                borderRadius:
+                  "9px",
+                background:
+                  loading
+                    ? "#8492a6"
+                    : "#123b70",
+                color:
+                  "#ffffff",
+                fontSize:
+                  "15px",
+                fontWeight:
+                  700,
+                cursor:
+                  loading
+                    ? "not-allowed"
+                    : "pointer",
+              }}
+            >
+              {loading
+                ? "Processing..."
+                : "Extract & Analyse Datasheet"}
+            </button>
+          )}
+
+          {/* ==========================================
+              PROCESSING STATUS
+          ========================================== */}
+
+          {loading && (
+            <div
+              style={{
+                marginTop: "20px",
+                padding:
+                  "16px 18px",
+                borderRadius:
+                  "9px",
+                background:
+                  "#eff6ff",
+                border:
+                  "1px solid #bfdbfe",
+                color:
+                  "#1e40af",
+                fontSize:
+                  "14px",
+                fontWeight:
+                  600,
+              }}
+            >
+              {stage}
             </div>
           )}
+
+          {/* ==========================================
+              ERROR
+          ========================================== */}
 
           {error && (
-            <div className="error">
-              <strong>Error:</strong> {error}
+            <div
+              style={{
+                marginTop: "20px",
+                padding:
+                  "16px 18px",
+                borderRadius:
+                  "9px",
+                background:
+                  "#fef2f2",
+                border:
+                  "1px solid #fecaca",
+                color:
+                  "#b42318",
+                fontSize:
+                  "14px",
+                lineHeight:
+                  1.6,
+              }}
+            >
+              <strong>
+                Error:
+              </strong>{" "}
+              {error}
             </div>
           )}
-        </div>
+        </section>
 
-        {result && (
-          <div className="result">
-            <div className="resultHeader">
-              <h3>Structured Material Record</h3>
+        {/* ==========================================
+            SUCCESS RESULT
+        ========================================== */}
 
-              <div className="successBadge">
-                ✓ Saved to Database
+        {result &&
+          result.type === "pdf" && (
+            <section
+              style={{
+                marginTop: "30px",
+                background:
+                  "#ffffff",
+                border:
+                  "1px solid #dce2ea",
+                borderRadius:
+                  "16px",
+                padding:
+                  "30px",
+                boxShadow:
+                  "0 8px 30px rgba(15,23,42,0.06)",
+              }}
+            >
+              {/* SUCCESS HEADER */}
+
+              <div
+                style={{
+                  display:
+                    "flex",
+                  alignItems:
+                    "center",
+                  justifyContent:
+                    "space-between",
+                  gap: "20px",
+                  marginBottom:
+                    "28px",
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      display:
+                        "inline-block",
+                      padding:
+                        "6px 12px",
+                      borderRadius:
+                        "20px",
+                      background:
+                        "#ecfdf3",
+                      color:
+                        "#027a48",
+                      fontSize:
+                        "12px",
+                      fontWeight:
+                        700,
+                      marginBottom:
+                        "10px",
+                    }}
+                  >
+                    ✓ SAVED TO DATABASE
+                  </div>
+
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize:
+                        "25px",
+                    }}
+                  >
+                    Material Ingestion
+                    Complete
+                  </h2>
+
+                  <p
+                    style={{
+                      margin:
+                        "8px 0 0",
+                      color:
+                        "#667085",
+                    }}
+                  >
+                    {result.fileName}
+                  </p>
+                </div>
+
+                <button
+                  onClick={
+                    resetUpload
+                  }
+                  style={{
+                    padding:
+                      "10px 17px",
+                    background:
+                      "#ffffff",
+                    border:
+                      "1px solid #d1d7e0",
+                    borderRadius:
+                      "8px",
+                    cursor:
+                      "pointer",
+                    fontWeight:
+                      600,
+                  }}
+                >
+                  Upload Another
+                </button>
               </div>
-            </div>
 
-            <div className="resultBody">
-              <div className="grid">
-                <div className="field">
-                  <div className="fieldLabel">
-                    Company
-                  </div>
+              {/* DATABASE IDS */}
 
-                  <div className="fieldValue">
-                    {result.company || "Not specified"}
-                  </div>
+              {result.savedData && (
+                <div
+                  style={{
+                    display:
+                      "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(180px, 1fr))",
+                    gap: "14px",
+                    marginBottom:
+                      "30px",
+                  }}
+                >
+                  <InfoCard
+                    label="Company"
+                    value={
+                      result.savedData
+                        .company_name
+                    }
+                  />
+
+                  <InfoCard
+                    label="Company ID"
+                    value={
+                      result.savedData
+                        .company_id
+                    }
+                  />
+
+                  <InfoCard
+                    label="Datasheet ID"
+                    value={
+                      result.savedData
+                        .datasheet_id
+                    }
+                  />
+
+                  <InfoCard
+                    label="Material ID"
+                    value={
+                      result.savedData
+                        .material_id
+                    }
+                  />
+
+                  <InfoCard
+                    label="Storage Path"
+                    value={
+                      result.savedData
+                        .storage_path ||
+                      "Saved"
+                    }
+                  />
                 </div>
-
-                <div className="field">
-                  <div className="fieldLabel">
-                    Material Name
-                  </div>
-
-                  <div className="fieldValue">
-                    {result.material_name ||
-                      "Not specified"}
-                  </div>
-                </div>
-
-                <div className="field">
-                  <div className="fieldLabel">
-                    Company Material Code
-                  </div>
-
-                  <div className="fieldValue">
-                    {result.company_material_code ||
-                      "Not specified"}
-                  </div>
-                </div>
-
-                <div className="field">
-                  <div className="fieldLabel">
-                    Material Family
-                  </div>
-
-                  <div className="fieldValue">
-                    {result.material_family ||
-                      "Not specified"}
-                  </div>
-                </div>
-
-                <div className="field">
-                  <div className="fieldLabel">
-                    Product Type
-                  </div>
-
-                  <div className="fieldValue">
-                    {result.product_type ||
-                      "Not specified"}
-                  </div>
-                </div>
-
-                <div className="field">
-                  <div className="fieldLabel">
-                    Pressure Rating
-                  </div>
-
-                  <div className="fieldValue">
-                    {result.pressure_rating ||
-                      "Not specified"}
-                  </div>
-                </div>
-              </div>
-
-              {result.description && (
-                <>
-                  <div className="sectionTitle">
-                    Description
-                  </div>
-
-                  <div className="field">
-                    <div className="fieldValue">
-                      {result.description}
-                    </div>
-                  </div>
-                </>
               )}
 
-              {result.dimensions && (
-                <>
-                  <div className="sectionTitle">
-                    Dimensions
-                  </div>
+              {/* ==========================================
+                  STRUCTURED DATA
+              ========================================== */}
 
-                  <div className="grid">
-                    <div className="field">
-                      <div className="fieldLabel">
-                        Size Range
-                      </div>
+              <div>
+                <h3
+                  style={{
+                    fontSize:
+                      "19px",
+                    marginBottom:
+                      "14px",
+                  }}
+                >
+                  AI Structured Material
+                </h3>
 
-                      <div className="fieldValue">
-                        {result.dimensions.size_range ||
-                          "Not specified"}
-                      </div>
-                    </div>
-
-                    <div className="field">
-                      <div className="fieldLabel">
-                        Pressure Class
-                      </div>
-
-                      <div className="fieldValue">
-                        {result.dimensions.pressure_class ||
-                          "Not specified"}
-                      </div>
-                    </div>
-
-                    <div className="field">
-                      <div className="fieldLabel">
-                        Face-to-Face
-                      </div>
-
-                      <div className="fieldValue">
-                        {result.dimensions.face_to_face ||
-                          "Not specified"}
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {result.materials && (
-                <>
-                  <div className="sectionTitle">
-                    Materials of Construction
-                  </div>
-
-                  <div className="grid">
-                    {Object.entries(result.materials)
-                      .filter(
-                        ([key, value]) =>
-                          key !== "other" &&
-                          value !== null &&
-                          value !== undefined &&
-                          value !== ""
-                      )
-                      .map(([key, value]) => (
-                        <div
-                          className="field"
-                          key={key}
-                        >
-                          <div className="fieldLabel">
-                            {key.replace(
-                              /_/g,
-                              " "
-                            )}
-                          </div>
-
-                          <div className="fieldValue">
-                            {typeof value ===
-                            "object"
-                              ? JSON.stringify(value)
-                              : String(value)}
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </>
-              )}
-
-              {Array.isArray(result.standards) &&
-                result.standards.length > 0 && (
-                  <>
-                    <div className="sectionTitle">
-                      Standards
-                    </div>
-
-                    <ul className="list">
-                      {result.standards.map(
-                        (standard, index) => (
-                          <li key={index}>
-                            {standard}
-                          </li>
-                        )
-                      )}
-                    </ul>
-                  </>
-                )}
-
-              {Array.isArray(
-                result.design_features
-              ) &&
-                result.design_features.length > 0 && (
-                  <>
-                    <div className="sectionTitle">
-                      Design Features
-                    </div>
-
-                    <ul className="list">
-                      {result.design_features.map(
-                        (feature, index) => (
-                          <li key={index}>
-                            {feature}
-                          </li>
-                        )
-                      )}
-                    </ul>
-                  </>
-                )}
-
-              {result.database && (
-                <>
-                  <div className="sectionTitle">
-                    Database Record
-                  </div>
-
-                  <div className="grid">
-                    <div className="field">
-                      <div className="fieldLabel">
-                        Company ID
-                      </div>
-
-                      <div className="fieldValue">
-                        {result.database.company_id}
-                      </div>
-                    </div>
-
-                    <div className="field">
-                      <div className="fieldLabel">
-                        Datasheet ID
-                      </div>
-
-                      <div className="fieldValue">
-                        {result.database.datasheet_id}
-                      </div>
-                    </div>
-
-                    <div className="field">
-                      <div className="fieldLabel">
-                        Material ID
-                      </div>
-
-                      <div className="fieldValue">
-                        {result.database.material_id}
-                      </div>
-                    </div>
-
-                    <div className="field">
-                      <div className="fieldLabel">
-                        Company
-                      </div>
-
-                      <div className="fieldValue">
-                        {result.database.company_name}
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              <div className="raw">
-                <div className="sectionTitle">
-                  Complete AI Output
-                </div>
-
-                <pre>
-                  {JSON.stringify(
-                    result,
-                    null,
-                    2
+                <div
+                  style={{
+                    background:
+                      "#0f172a",
+                    color:
+                      "#e2e8f0",
+                    borderRadius:
+                      "10px",
+                    padding:
+                      "20px",
+                    overflow:
+                      "auto",
+                    fontSize:
+                      "13px",
+                    lineHeight:
+                      1.65,
+                    whiteSpace:
+                      "pre-wrap",
+                    maxHeight:
+                      "600px",
+                  }}
+                >
+                  {formatJSON(
+                    result.structuredData
                   )}
-                </pre>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
-      </section>
 
-      <footer className="footer">
-        Bharat Material Grid · Phase 1 AI Material
-        Ingestion
+              {/* ==========================================
+                  IMPORTANT MATERIAL DETAILS
+              ========================================== */}
+
+              <div
+                style={{
+                  marginTop:
+                    "30px",
+                }}
+              >
+                <h3
+                  style={{
+                    fontSize:
+                      "19px",
+                    marginBottom:
+                      "14px",
+                  }}
+                >
+                  Key Material Information
+                </h3>
+
+                <div
+                  style={{
+                    display:
+                      "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(260px, 1fr))",
+                    gap: "14px",
+                  }}
+                >
+                  <DetailCard
+                    label="Company"
+                    value={
+                      result
+                        .structuredData
+                        ?.company
+                    }
+                  />
+
+                  <DetailCard
+                    label="Material Name"
+                    value={
+                      result
+                        .structuredData
+                        ?.material_name
+                    }
+                  />
+
+                  <DetailCard
+                    label="Material Code"
+                    value={
+                      result
+                        .structuredData
+                        ?.company_material_code
+                    }
+                  />
+
+                  <DetailCard
+                    label="Material Family"
+                    value={
+                      result
+                        .structuredData
+                        ?.material_family
+                    }
+                  />
+
+                  <DetailCard
+                    label="Product Type"
+                    value={
+                      result
+                        .structuredData
+                        ?.product_type
+                    }
+                  />
+
+                  <DetailCard
+                    label="Manufacturer"
+                    value={
+                      result
+                        .structuredData
+                        ?.manufacturer
+                    }
+                  />
+
+                  <DetailCard
+                    label="Model"
+                    value={
+                      result
+                        .structuredData
+                        ?.model
+                    }
+                  />
+
+                  <DetailCard
+                    label="Pressure Rating"
+                    value={
+                      result
+                        .structuredData
+                        ?.pressure_rating
+                    }
+                  />
+
+                  <DetailCard
+                    label="Temperature Rating"
+                    value={
+                      result
+                        .structuredData
+                        ?.temperature_rating
+                    }
+                  />
+                </div>
+              </div>
+            </section>
+          )}
+
+        {/* ==========================================
+            EXCEL RESULT
+        ========================================== */}
+
+        {result &&
+          result.type === "excel" && (
+            <section
+              style={{
+                marginTop: "30px",
+                background:
+                  "#ffffff",
+                border:
+                  "1px solid #dce2ea",
+                borderRadius:
+                  "16px",
+                padding:
+                  "30px",
+                boxShadow:
+                  "0 8px 30px rgba(15,23,42,0.06)",
+              }}
+            >
+              <div
+                style={{
+                  display:
+                    "flex",
+                  justifyContent:
+                    "space-between",
+                  alignItems:
+                    "center",
+                  marginBottom:
+                    "20px",
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      display:
+                        "inline-block",
+                      padding:
+                        "6px 12px",
+                      borderRadius:
+                        "20px",
+                      background:
+                        "#eff6ff",
+                      color:
+                        "#1d4ed8",
+                      fontSize:
+                        "12px",
+                      fontWeight:
+                        700,
+                      marginBottom:
+                        "10px",
+                    }}
+                  >
+                    ✓ EXTRACTED
+                  </div>
+
+                  <h2
+                    style={{
+                      margin: 0,
+                    }}
+                  >
+                    Excel Datasheet
+                  </h2>
+                </div>
+
+                <button
+                  onClick={
+                    resetUpload
+                  }
+                  style={{
+                    padding:
+                      "10px 17px",
+                    background:
+                      "#ffffff",
+                    border:
+                      "1px solid #d1d7e0",
+                    borderRadius:
+                      "8px",
+                    cursor:
+                      "pointer",
+                  }}
+                >
+                  Upload Another
+                </button>
+              </div>
+
+              {Object.entries(
+                result.sheets || {}
+              ).map(
+                ([sheetName, rows]) => (
+                  <div
+                    key={
+                      sheetName
+                    }
+                    style={{
+                      marginTop:
+                        "25px",
+                    }}
+                  >
+                    <h3>
+                      {sheetName}
+                    </h3>
+
+                    <div
+                      style={{
+                        background:
+                          "#0f172a",
+                        color:
+                          "#e2e8f0",
+                        padding:
+                          "20px",
+                        borderRadius:
+                          "10px",
+                        overflow:
+                          "auto",
+                        maxHeight:
+                          "500px",
+                        fontSize:
+                          "13px",
+                        whiteSpace:
+                          "pre-wrap",
+                      }}
+                    >
+                      {formatJSON(
+                        rows
+                      )}
+                    </div>
+                  </div>
+                )
+              )}
+            </section>
+          )}
+      </div>
+
+      {/* ==========================================
+          FOOTER
+      ========================================== */}
+
+      <footer
+        style={{
+          background:
+            "#172033",
+          color:
+            "#cbd5e1",
+          padding:
+            "25px",
+          textAlign:
+            "center",
+          fontSize:
+            "12px",
+        }}
+      >
+        Bharat Material Grid
+        • Industrial Material
+        Harmonization Platform
       </footer>
     </main>
+  );
+}
+
+// ==========================================
+// INFO CARD
+// ==========================================
+
+function InfoCard({
+  label,
+  value,
+}) {
+  return (
+    <div
+      style={{
+        padding:
+          "16px",
+        border:
+          "1px solid #e1e6ee",
+        borderRadius:
+          "10px",
+        background:
+          "#f8fafc",
+      }}
+    >
+      <div
+        style={{
+          fontSize:
+            "11px",
+          textTransform:
+            "uppercase",
+          letterSpacing:
+            "0.06em",
+          color:
+            "#667085",
+          marginBottom:
+            "7px",
+          fontWeight:
+            700,
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          fontWeight:
+            700,
+          fontSize:
+            "14px",
+          wordBreak:
+            "break-word",
+        }}
+      >
+        {value ??
+          "Not available"}
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// DETAIL CARD
+// ==========================================
+
+function DetailCard({
+  label,
+  value,
+}) {
+  return (
+    <div
+      style={{
+        border:
+          "1px solid #e1e6ee",
+        borderRadius:
+          "10px",
+        padding:
+          "16px",
+        background:
+          "#ffffff",
+      }}
+    >
+      <div
+        style={{
+          fontSize:
+            "12px",
+          color:
+            "#667085",
+          marginBottom:
+            "6px",
+          fontWeight:
+            600,
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          fontSize:
+            "14px",
+          fontWeight:
+            700,
+          lineHeight:
+            1.5,
+          wordBreak:
+            "break-word",
+        }}
+      >
+        {value ??
+          "Not specified"}
+      </div>
+    </div>
   );
 }
