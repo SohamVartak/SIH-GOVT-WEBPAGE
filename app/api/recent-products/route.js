@@ -35,7 +35,8 @@ function getSupabaseAdmin() {
 // ============================================================
 // GET RECENT PRODUCTS
 //
-// Default: latest 20 products
+// Default:
+// latest 20 uploaded products
 //
 // Optional:
 // /api/recent-products?limit=10
@@ -62,12 +63,14 @@ export async function GET(
 
     if (
       !limit ||
-      Number.isNaN(limit)
+      Number.isNaN(
+        limit
+      )
     ) {
       limit = 20;
     }
 
-    // Keep this endpoint small for testing.
+    // Keep testing list between 1 and 50.
     limit = Math.min(
       Math.max(
         limit,
@@ -78,6 +81,9 @@ export async function GET(
 
     // ========================================================
     // LOAD RECENT MATERIALS
+    //
+    // We still use material ID as a fallback ordering because
+    // existing materials may pre-date datasheet upload dates.
     // ========================================================
 
     const {
@@ -103,7 +109,8 @@ export async function GET(
       .order(
         "id",
         {
-          ascending: false,
+          ascending:
+            false,
         }
       )
       .limit(
@@ -121,14 +128,19 @@ export async function GET(
       materials.length === 0
     ) {
       return NextResponse.json({
-        success: true,
-        count: 0,
-        products: [],
+        success:
+          true,
+
+        count:
+          0,
+
+        products:
+          [],
       });
     }
 
     // ========================================================
-    // IDS
+    // COLLECT IDS
     // ========================================================
 
     const materialIds =
@@ -146,8 +158,10 @@ export async function GET(
           )
           .filter(
             (value) =>
-              value !== null &&
-              value !== undefined
+              value !==
+                null &&
+              value !==
+                undefined
           )
       ),
     ];
@@ -161,8 +175,10 @@ export async function GET(
           )
           .filter(
             (value) =>
-              value !== null &&
-              value !== undefined
+              value !==
+                null &&
+              value !==
+                undefined
           )
       ),
     ];
@@ -176,8 +192,10 @@ export async function GET(
           )
           .filter(
             (value) =>
-              value !== null &&
-              value !== undefined
+              value !==
+                null &&
+              value !==
+                undefined
           )
       ),
     ];
@@ -186,10 +204,12 @@ export async function GET(
     // LOAD COMPANIES
     // ========================================================
 
-    let companies = [];
+    let companies =
+      [];
 
     if (
-      companyIds.length > 0
+      companyIds.length >
+      0
     ) {
       const {
         data,
@@ -224,10 +244,12 @@ export async function GET(
     // LOAD FACILITIES
     // ========================================================
 
-    let facilities = [];
+    let facilities =
+      [];
 
     if (
-      facilityIds.length > 0
+      facilityIds.length >
+      0
     ) {
       const {
         data,
@@ -263,13 +285,15 @@ export async function GET(
     }
 
     // ========================================================
-    // LOAD BMG
+    // LOAD BMG MASTER RECORDS
     // ========================================================
 
-    let bmgRows = [];
+    let bmgRows =
+      [];
 
     if (
-      bmgIds.length > 0
+      bmgIds.length >
+      0
     ) {
       const {
         data,
@@ -310,7 +334,8 @@ export async function GET(
 
     const {
       data: details,
-      error: detailsError,
+      error:
+        detailsError,
     } = await supabase
       .from(
         "material_details"
@@ -328,12 +353,13 @@ export async function GET(
     }
 
     // ========================================================
-    // LOAD BMG MAPPINGS
+    // LOAD ACTIVE BMG MAPPINGS
     // ========================================================
 
     const {
       data: mappings,
-      error: mappingsError,
+      error:
+        mappingsError,
     } = await supabase
       .from(
         "material_bmg_mapping"
@@ -349,7 +375,9 @@ export async function GET(
           verified,
           verified_by,
           verified_at,
-          active
+          active,
+          created_at,
+          updated_at
         `
       )
       .in(
@@ -368,6 +396,52 @@ export async function GET(
     }
 
     // ========================================================
+    // LOAD DATASHEET INFORMATION
+    //
+    // This gives the UI the original uploaded file and
+    // upload timestamp when a material is connected to one.
+    // ========================================================
+
+    const {
+      data: datasheets,
+      error:
+        datasheetError,
+    } = await supabase
+      .from(
+        "datasheets"
+      )
+      .select(
+        `
+          datasheet_id,
+          company_id,
+          facility_id,
+          file_name,
+          file_path,
+          uploaded_at,
+          extraction_status
+        `
+      )
+      .in(
+        "company_id",
+        companyIds
+      )
+      .order(
+        "uploaded_at",
+        {
+          ascending:
+            false,
+        }
+      );
+
+    if (
+      datasheetError
+    ) {
+      throw new Error(
+        `Failed to load datasheet information: ${datasheetError.message}`
+      );
+    }
+
+    // ========================================================
     // MAPS
     // ========================================================
 
@@ -376,7 +450,7 @@ export async function GET(
 
     for (
       const company of
-      companies
+        companies
     ) {
       companyMap.set(
         company.company_id,
@@ -389,7 +463,7 @@ export async function GET(
 
     for (
       const facility of
-      facilities
+        facilities
     ) {
       facilityMap.set(
         facility.facility_id,
@@ -402,7 +476,7 @@ export async function GET(
 
     for (
       const bmg of
-      bmgRows
+        bmgRows
     ) {
       bmgMap.set(
         bmg.bmg_id,
@@ -415,7 +489,7 @@ export async function GET(
 
     for (
       const detail of
-      details || []
+        details || []
     ) {
       detailMap.set(
         detail.material_id,
@@ -428,7 +502,7 @@ export async function GET(
 
     for (
       const mapping of
-      mappings || []
+        mappings || []
     ) {
       mappingMap.set(
         mapping.material_id,
@@ -437,7 +511,37 @@ export async function GET(
     }
 
     // ========================================================
-    // BUILD RESPONSE
+    // DATASHEET MAP
+    //
+    // Best matching datasheet is based on company + facility.
+    // ========================================================
+
+    const datasheetMap =
+      new Map();
+
+    for (
+      const datasheet of
+        datasheets || []
+    ) {
+      const key =
+        `${datasheet.company_id}-${datasheet.facility_id}`;
+
+      // Because datasheets are ordered newest first,
+      // keep the first one encountered.
+      if (
+        !datasheetMap.has(
+          key
+        )
+      ) {
+        datasheetMap.set(
+          key,
+          datasheet
+        );
+      }
+    }
+
+    // ========================================================
+    // BUILD PRODUCT RESPONSE
     // ========================================================
 
     const products =
@@ -467,6 +571,28 @@ export async function GET(
             mappingMap.get(
               material.id
             );
+
+          const datasheet =
+            datasheetMap.get(
+              `${material.company_id}-${material.facility_id}`
+            );
+
+          // --------------------------------------------------
+          // BMG ASSIGNMENT STATE
+          // --------------------------------------------------
+
+          const hasBMG =
+            Boolean(
+              material.bmg_id &&
+                bmg
+            );
+
+          const canAssignBMG =
+            !hasBMG;
+
+          // --------------------------------------------------
+          // PRODUCT
+          // --------------------------------------------------
 
           return {
             material_id:
@@ -530,51 +656,101 @@ export async function GET(
                 null,
             },
 
-            bmg: bmg
-              ? {
-                  bmg_id:
-                    bmg.bmg_id,
+            // ------------------------------------------------
+            // DATASHEET
+            // ------------------------------------------------
 
-                  bmg_code:
-                    bmg.bmg_code,
+            datasheet:
+              datasheet
+                ? {
+                    datasheet_id:
+                      datasheet.datasheet_id,
 
-                  ncs_name:
-                    bmg.ncs_name,
+                    file_name:
+                      datasheet.file_name,
 
-                  category:
-                    bmg.category,
+                    file_path:
+                      datasheet.file_path,
 
-                  subcategory:
-                    bmg.subcategory,
+                    uploaded_at:
+                      datasheet.uploaded_at,
 
-                  ncs_standard_specification:
-                    bmg.ncs_standard_specification,
+                    extraction_status:
+                      datasheet.extraction_status,
+                  }
+                : null,
 
-                  status:
-                    bmg.status,
-                }
-              : {
-                  bmg_id:
-                    null,
+            // ------------------------------------------------
+            // BMG
+            // ------------------------------------------------
 
-                  bmg_code:
-                    null,
+            bmg:
+              bmg
+                ? {
+                    bmg_id:
+                      bmg.bmg_id,
 
-                  ncs_name:
-                    null,
+                    bmg_code:
+                      bmg.bmg_code,
 
-                  category:
-                    null,
+                    ncs_name:
+                      bmg.ncs_name,
 
-                  subcategory:
-                    null,
+                    category:
+                      bmg.category,
 
-                  ncs_standard_specification:
-                    null,
+                    subcategory:
+                      bmg.subcategory,
 
-                  status:
-                    null,
-                },
+                    ncs_standard_specification:
+                      bmg.ncs_standard_specification,
+
+                    status:
+                      bmg.status,
+                  }
+                : {
+                    bmg_id:
+                      null,
+
+                    bmg_code:
+                      null,
+
+                    ncs_name:
+                      null,
+
+                    category:
+                      null,
+
+                    subcategory:
+                      null,
+
+                    ncs_standard_specification:
+                      null,
+
+                    status:
+                      null,
+                  },
+
+            // ------------------------------------------------
+            // BMG STATUS
+            //
+            // These fields are specifically for the frontend.
+            // ------------------------------------------------
+
+            bmg_assigned:
+              hasBMG,
+
+            can_assign_bmg:
+              canAssignBMG,
+
+            bmg_assignment_status:
+              hasBMG
+                ? "ASSIGNED"
+                : "NOT_ASSIGNED",
+
+            // ------------------------------------------------
+            // MAPPING
+            // ------------------------------------------------
 
             bmg_mapping:
               mapping
@@ -602,11 +778,22 @@ export async function GET(
 
                     active:
                       mapping.active,
+
+                    created_at:
+                      mapping.created_at,
+
+                    updated_at:
+                      mapping.updated_at,
                   }
                 : null,
 
+            // ------------------------------------------------
+            // TECHNICAL DETAILS
+            // ------------------------------------------------
+
             technical_details:
-              detail || null,
+              detail ||
+              null,
           };
         }
       );

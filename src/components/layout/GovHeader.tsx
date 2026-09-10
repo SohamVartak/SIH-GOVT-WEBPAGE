@@ -386,12 +386,14 @@ export const GovHeader: React.FC = () => {
     },
 
     {
-      id: 'procurement',
-      label: 'Bulk Savings & Deals',
-      hindiLabel: 'थोक खरीद बचत',
-      icon: (
-        <TrendingUp className="w-3.5 h-3.5" />
-      ),
+     
+         id: 'procurement',
+          label: 'Part Search & Datasheets',
+          hindiLabel: 'पार्ट खोज एवं डेटाशीट',
+         icon:
+         ( <Search className="w-3.5 h-3.5" />
+         )
+      
     },
 
     {

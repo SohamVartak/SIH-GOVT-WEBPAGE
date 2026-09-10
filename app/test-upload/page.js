@@ -22,6 +22,9 @@ export default function TestUploadPage() {
   const [selectedRecentProduct, setSelectedRecentProduct] =
     useState(null);
 
+  const [assigningMaterialId, setAssigningMaterialId] =
+    useState(null);
+
   // ==========================================================
   // LOAD RECENT PRODUCTS
   // ==========================================================
@@ -71,12 +74,140 @@ export default function TestUploadPage() {
   };
 
   // ==========================================================
-  // LOAD RECENT PRODUCTS ON PAGE LOAD
+  // LOAD ON PAGE OPEN
   // ==========================================================
 
   useEffect(() => {
     loadRecentProducts();
   }, []);
+
+  // ==========================================================
+  // ASSIGN BMG TO EXISTING PRODUCT
+  // ==========================================================
+
+  const assignBMGToExistingProduct =
+    async (
+      product
+    ) => {
+      const materialId =
+        product?.material_id;
+
+      if (!materialId) {
+        setError(
+          "This product does not have a valid Material ID."
+        );
+        return;
+      }
+
+      setAssigningMaterialId(
+        materialId
+      );
+
+      setError("");
+
+      try {
+        const response =
+          await fetch(
+            "/api/assign-bmg",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                materialId,
+              }),
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          throw new Error(
+            data.details ||
+              data.error ||
+              "Failed to assign BMG."
+          );
+        }
+
+        // Refresh recent list.
+        await loadRecentProducts();
+
+        // Update selected product too.
+        const updated =
+          data.data || {};
+
+        setSelectedRecentProduct(
+          (current) => {
+            if (
+              !current ||
+              current.material_id !==
+                materialId
+            ) {
+              return current;
+            }
+
+            return {
+              ...current,
+
+              bmg: {
+                ...(current.bmg ||
+                  {}),
+
+                bmg_id:
+                  updated.bmg_id,
+
+                bmg_code:
+                  updated.bmg_code,
+
+                ncs_name:
+                  updated.ncs_name,
+
+                status:
+                  updated.bmg_status,
+              },
+
+              bmg_assigned:
+                true,
+
+              can_assign_bmg:
+                false,
+
+              bmg_assignment_status:
+                "ASSIGNED",
+            };
+          }
+        );
+
+        setStage(
+          `BMG assigned successfully: ${
+            updated.bmg_code ||
+            "assigned"
+          }`
+        );
+      } catch (err) {
+        console.error(
+          "Assign BMG error:",
+          err
+        );
+
+        setError(
+          err?.message ||
+            "Failed to assign BMG."
+        );
+      } finally {
+        setAssigningMaterialId(
+          null
+        );
+      }
+    };
 
   // ==========================================================
   // FILE SELECTION
@@ -88,7 +219,9 @@ export default function TestUploadPage() {
     setError("");
     setResult(null);
     setStage("");
-    setSelectedRecentProduct(null);
+    setSelectedRecentProduct(
+      null
+    );
 
     if (!selectedFile) {
       return;
@@ -145,7 +278,7 @@ export default function TestUploadPage() {
   };
 
   // ==========================================================
-  // BMG ASSIGNMENT
+  // BMG ASSIGNMENT FOR NEW UPLOAD
   // ==========================================================
 
   const assignBMG = async (
@@ -196,19 +329,7 @@ export default function TestUploadPage() {
   };
 
   // ==========================================================
-  // MAIN INGESTION PIPELINE
-  //
-  // PDF
-  // ↓
-  // Extract
-  // ↓
-  // AI Structure
-  // ↓
-  // Save / Detect Duplicate
-  // ↓
-  // BMG Assignment
-  // ↓
-  // Display
+  // MAIN UPLOAD PIPELINE
   // ==========================================================
 
   const extractAndStructure =
@@ -291,7 +412,7 @@ export default function TestUploadPage() {
         }
 
         // ======================================================
-        // STEP 2 — AI STRUCTURING
+        // STEP 2 — AI STRUCTURE
         // ======================================================
 
         setStage(
@@ -333,10 +454,9 @@ export default function TestUploadPage() {
         const structuredData =
           aiData.data || {};
 
-        const detectedCompany =
-          structuredData.company?.trim();
-
-        if (!detectedCompany) {
+        if (
+          !structuredData.company?.trim()
+        ) {
           throw new Error(
             "AI could not identify the company from the datasheet."
           );
@@ -388,10 +508,6 @@ export default function TestUploadPage() {
           );
         }
 
-        // ======================================================
-        // FINAL SAVED DATA
-        // ======================================================
-
         let finalSavedData = {
           ...(saveData.data || {}),
         };
@@ -404,39 +520,31 @@ export default function TestUploadPage() {
           finalSavedData.bmg_code ||
           finalSavedData.bmg_common_code;
 
-        let bmgData =
-          null;
-
         if (
-          existingBmgCode
+          !existingBmgCode
         ) {
-          setStage(
-            "Existing product found. Existing BMG Common Code and NCS name loaded."
-          );
-        } else {
           const materialId =
             finalSavedData.material_id;
 
           if (!materialId) {
             throw new Error(
-              "Material was saved, but no material ID was returned, so BMG assignment cannot continue."
+              "Material was saved, but no Material ID was returned."
             );
           }
 
-          bmgData =
+          const bmgData =
             await assignBMG(
               materialId
             );
 
           finalSavedData = {
             ...finalSavedData,
-
             ...(bmgData.data || {}),
           };
         }
 
         // ======================================================
-        // REFRESH RECENT PRODUCTS
+        // REFRESH RECENT
         // ======================================================
 
         await loadRecentProducts();
@@ -551,7 +659,7 @@ export default function TestUploadPage() {
   };
 
   // ==========================================================
-  // LOCATION HELPER
+  // LOCATION
   // ==========================================================
 
   const getLocationText =
@@ -575,7 +683,7 @@ export default function TestUploadPage() {
     };
 
   // ==========================================================
-  // BMG COMMON CODE
+  // BMG CODE
   // ==========================================================
 
   const getBmgCommonCode =
@@ -601,20 +709,6 @@ export default function TestUploadPage() {
         ?.ncs_standard_name ||
       "NOT ASSIGNED"
     );
-  };
-
-  // ==========================================================
-  // SELECT RECENT PRODUCT
-  // ==========================================================
-
-  const openRecentProduct = (
-    product
-  ) => {
-    setSelectedRecentProduct(
-      product
-    );
-
-    setError("");
   };
 
   // ==========================================================
@@ -775,10 +869,6 @@ export default function TestUploadPage() {
             "50px 24px 80px",
         }}
       >
-        {/* ====================================================
-            TITLE
-        ==================================================== */}
-
         <div
           style={{
             marginBottom:
@@ -810,9 +900,6 @@ export default function TestUploadPage() {
 
               fontWeight:
                 800,
-
-              letterSpacing:
-                "-0.02em",
             }}
           >
             Datasheet Upload
@@ -833,19 +920,14 @@ export default function TestUploadPage() {
                 1.7,
             }}
           >
-            Upload a company datasheet.
-            The system extracts the
-            product, company, facility,
-            location and technical
-            information, detects
-            duplicates and assigns
-            the appropriate BMG Common
-            Code.
+            Upload a company datasheet or
+            test BMG standardization using
+            an existing product.
           </p>
         </div>
 
         {/* ====================================================
-            UPLOAD + RECENT PRODUCTS
+            UPLOAD + RECENT
         ==================================================== */}
 
         <div
@@ -864,7 +946,7 @@ export default function TestUploadPage() {
           }}
         >
           {/* ==================================================
-              UPLOAD CARD
+              UPLOAD
           ================================================== */}
 
           <section
@@ -914,9 +996,6 @@ export default function TestUploadPage() {
                   dragging
                     ? "#eff6ff"
                     : "#f8fafc",
-
-                transition:
-                  "all 0.2s ease",
               }}
             >
               <div
@@ -958,10 +1037,9 @@ export default function TestUploadPage() {
                     1.6,
                 }}
               >
-                Drag and drop a PDF
-                or Excel datasheet
-                here, or select one
-                from your computer.
+                Drag and drop a PDF or Excel
+                datasheet here, or select
+                one from your computer.
               </p>
 
               <label
@@ -1026,10 +1104,6 @@ export default function TestUploadPage() {
               </div>
             </div>
 
-            {/* ==================================================
-                SELECTED FILE
-            ================================================== */}
-
             {file && (
               <div
                 style={{
@@ -1051,11 +1125,11 @@ export default function TestUploadPage() {
                   display:
                     "flex",
 
-                  alignItems:
-                    "center",
-
                   justifyContent:
                     "space-between",
+
+                  alignItems:
+                    "center",
 
                   gap:
                     "20px",
@@ -1072,9 +1146,6 @@ export default function TestUploadPage() {
 
                       color:
                         "#667085",
-
-                      marginBottom:
-                        "5px",
                     }}
                   >
                     Selected file
@@ -1085,32 +1156,14 @@ export default function TestUploadPage() {
                       fontWeight:
                         700,
 
+                      marginTop:
+                        "5px",
+
                       wordBreak:
                         "break-word",
                     }}
                   >
                     {file.name}
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize:
-                        "12px",
-
-                      color:
-                        "#7a8494",
-
-                      marginTop:
-                        "4px",
-                    }}
-                  >
-                    {(
-                      file.size /
-                      1024
-                    ).toFixed(
-                      1
-                    )}{" "}
-                    KB
                   </div>
                 </div>
 
@@ -1142,10 +1195,6 @@ export default function TestUploadPage() {
               </div>
             )}
 
-            {/* ==================================================
-                PROCESS BUTTON
-            ================================================== */}
-
             {file &&
               !result && (
                 <button
@@ -1163,7 +1212,7 @@ export default function TestUploadPage() {
                       "22px",
 
                     padding:
-                      "15px 20px",
+                      "15px",
 
                     border:
                       "none",
@@ -1197,10 +1246,6 @@ export default function TestUploadPage() {
                 </button>
               )}
 
-            {/* ==================================================
-                STATUS
-            ================================================== */}
-
             {loading && (
               <div
                 style={{
@@ -1208,7 +1253,7 @@ export default function TestUploadPage() {
                     "20px",
 
                   padding:
-                    "16px 18px",
+                    "16px",
 
                   borderRadius:
                     "9px",
@@ -1222,9 +1267,6 @@ export default function TestUploadPage() {
                   color:
                     "#1e40af",
 
-                  fontSize:
-                    "14px",
-
                   fontWeight:
                     600,
                 }}
@@ -1233,10 +1275,6 @@ export default function TestUploadPage() {
               </div>
             )}
 
-            {/* ==================================================
-                ERROR
-            ================================================== */}
-
             {error && (
               <div
                 style={{
@@ -1244,7 +1282,7 @@ export default function TestUploadPage() {
                     "20px",
 
                   padding:
-                    "16px 18px",
+                    "16px",
 
                   borderRadius:
                     "9px",
@@ -1257,9 +1295,6 @@ export default function TestUploadPage() {
 
                   color:
                     "#b42318",
-
-                  fontSize:
-                    "14px",
 
                   lineHeight:
                     1.6,
@@ -1312,9 +1347,6 @@ export default function TestUploadPage() {
                 alignItems:
                   "center",
 
-                gap:
-                  "10px",
-
                 marginBottom:
                   "18px",
               }}
@@ -1331,14 +1363,11 @@ export default function TestUploadPage() {
                     color:
                       "#667085",
 
-                    letterSpacing:
-                      "0.06em",
-
                     textTransform:
                       "uppercase",
 
-                    marginBottom:
-                      "5px",
+                    letterSpacing:
+                      "0.06em",
                   }}
                 >
                   Testing
@@ -1347,7 +1376,7 @@ export default function TestUploadPage() {
                 <h2
                   style={{
                     margin:
-                      0,
+                      "5px 0 0",
 
                     fontSize:
                       "21px",
@@ -1366,6 +1395,9 @@ export default function TestUploadPage() {
                   recentLoading
                 }
                 style={{
+                  padding:
+                    "8px 11px",
+
                   border:
                     "1px solid #d1d7e0",
 
@@ -1375,63 +1407,74 @@ export default function TestUploadPage() {
                   borderRadius:
                     "7px",
 
-                  padding:
-                    "8px 11px",
-
                   cursor:
                     recentLoading
                       ? "not-allowed"
                       : "pointer",
 
-                  fontSize:
-                    "12px",
-
                   fontWeight:
                     700,
+
+                  fontSize:
+                    "12px",
                 }}
               >
                 {recentLoading
-                  ? "Loading..."
+                  ? "Loading"
                   : "Refresh"}
               </button>
             </div>
 
-            <p
+            <div
               style={{
-                margin:
-                  "0 0 18px",
+                padding:
+                  "10px 12px",
+
+                marginBottom:
+                  "15px",
+
+                borderRadius:
+                  "8px",
+
+                background:
+                  "#f8fafc",
+
+                border:
+                  "1px solid #e1e6ee",
+
+                fontSize:
+                  "12px",
 
                 color:
                   "#667085",
-
-                fontSize:
-                  "13px",
 
                 lineHeight:
                   1.5,
               }}
             >
-              View recently uploaded
-              products without
-              uploading the PDF again.
-            </p>
+              Click an assigned product to
+              inspect it. Older products
+              without a BMG code can be
+              assigned directly using the
+              button below.
+            </div>
 
-            {recentLoading &&
-              recentProducts.length ===
-                0 && (
+            {recentProducts.length ===
+              0 &&
+              !recentLoading && (
                 <div
                   style={{
                     padding:
                       "18px",
+
+                    background:
+                      "#f8fafc",
 
                     border:
                       "1px solid #e1e6ee",
 
                     borderRadius:
                       "10px",
-
-                    background:
-                      "#f8fafc",
 
                     color:
                       "#667085",
@@ -1440,41 +1483,7 @@ export default function TestUploadPage() {
                       "13px",
                   }}
                 >
-                  Loading recent
-                  products...
-                </div>
-              )}
-
-            {!recentLoading &&
-              recentProducts.length ===
-                0 && (
-                <div
-                  style={{
-                    padding:
-                      "18px",
-
-                    border:
-                      "1px solid #e1e6ee",
-
-                    borderRadius:
-                      "10px",
-
-                    background:
-                      "#f8fafc",
-
-                    color:
-                      "#667085",
-
-                    fontSize:
-                      "13px",
-
-                    lineHeight:
-                      1.5,
-                  }}
-                >
-                  No recently
-                  uploaded products
-                  found.
+                  No products found.
                 </div>
               )}
 
@@ -1490,40 +1499,34 @@ export default function TestUploadPage() {
                   "12px",
 
                 maxHeight:
-                  "620px",
+                  "650px",
 
                 overflowY:
                   "auto",
-
-                paddingRight:
-                  "4px",
               }}
             >
               {recentProducts.map(
                 (product) => {
+                  const hasBMG =
+                    product.bmg_assigned &&
+                    product.bmg
+                      ?.bmg_code;
+
+                  const isAssigning =
+                    assigningMaterialId ===
+                    product.material_id;
+
                   const isSelected =
                     selectedRecentProduct
                       ?.material_id ===
                     product.material_id;
 
                   return (
-                    <button
-                      type="button"
+                    <div
                       key={
                         product.material_id
                       }
-                      onClick={() =>
-                        openRecentProduct(
-                          product
-                        )
-                      }
                       style={{
-                        width:
-                          "100%",
-
-                        textAlign:
-                          "left",
-
                         border:
                           isSelected
                             ? "2px solid #1d4ed8"
@@ -1539,82 +1542,55 @@ export default function TestUploadPage() {
                           isSelected
                             ? "#eff6ff"
                             : "#f8fafc",
-
-                        cursor:
-                          "pointer",
                       }}
                     >
-                      <div
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedRecentProduct(
+                            product
+                          )
+                        }
                         style={{
-                          fontSize:
-                            "16px",
+                          width:
+                            "100%",
 
-                          fontWeight:
-                            800,
+                          padding:
+                            0,
 
-                          color:
-                            "#172033",
+                          border:
+                            "none",
 
-                          marginBottom:
-                            "6px",
+                          background:
+                            "transparent",
 
-                          wordBreak:
-                            "break-word",
-                        }}
-                      >
-                        {product.material_name ||
-                          "Unnamed Product"}
-                      </div>
+                          textAlign:
+                            "left",
 
-                      <div
-                        style={{
-                          fontSize:
-                            "12px",
-
-                          color:
-                            "#667085",
-
-                          marginBottom:
-                            "10px",
-                        }}
-                      >
-                        {product.company ||
-                          "Unknown Company"}
-                      </div>
-
-                      <div
-                        style={{
-                          display:
-                            "grid",
-
-                          gap:
-                            "5px",
+                          cursor:
+                            "pointer",
                         }}
                       >
                         <div
                           style={{
                             fontSize:
-                              "12px",
-                          }}
-                        >
-                          <strong>
-                            Company Code:
-                          </strong>{" "}
-                          {product.company_material_code ||
-                            "Not available"}
-                        </div>
+                              "16px",
 
-                        <div
-                          style={{
-                            fontSize:
-                              "12px",
+                            fontWeight:
+                              800,
+
+                            color:
+                              "#172033",
+
+                            marginBottom:
+                              "5px",
+
+                            wordBreak:
+                              "break-word",
                           }}
                         >
-                          <strong>
-                            Unique Code:
-                          </strong>{" "}
-                          {product.unique_product_code ||
-                            "Not assigned"}
+                          {product.material_name ||
+                            "Unnamed Product"}
                         </div>
 
                         <div
@@ -1623,18 +1599,14 @@ export default function TestUploadPage() {
                               "12px",
 
                             color:
-                              "#5b21b6",
+                              "#667085",
 
-                            fontWeight:
-                              700,
+                            marginBottom:
+                              "10px",
                           }}
                         >
-                          <strong>
-                            BMG:
-                          </strong>{" "}
-                          {product.bmg
-                            ?.bmg_code ||
-                            "Not assigned"}
+                          {product.company ||
+                            "Unknown Company"}
                         </div>
 
                         <div
@@ -1642,29 +1614,128 @@ export default function TestUploadPage() {
                             fontSize:
                               "12px",
 
+                            lineHeight:
+                              1.6,
+                          }}
+                        >
+                          <div>
+                            <strong>
+                              Company Code:
+                            </strong>{" "}
+                            {product.company_material_code ||
+                              "Not available"}
+                          </div>
+
+                          <div>
+                            <strong>
+                              Unique Code:
+                            </strong>{" "}
+                            {product.unique_product_code ||
+                              "Not assigned"}
+                          </div>
+
+                          <div
+                            style={{
+                              color:
+                                "#5b21b6",
+
+                              fontWeight:
+                                700,
+                            }}
+                          >
+                            <strong>
+                              BMG:
+                            </strong>{" "}
+                            {product.bmg
+                              ?.bmg_code ||
+                              "Not assigned"}
+                          </div>
+
+                          <div
+                            style={{
+                              color:
+                                "#047857",
+
+                              fontWeight:
+                                700,
+                            }}
+                          >
+                            <strong>
+                              NCS:
+                            </strong>{" "}
+                            {product.bmg
+                              ?.ncs_name ||
+                              "Not assigned"}
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* ==================================================
+                          ASSIGN BMG BUTTON
+                      ================================================== */}
+
+                      {!hasBMG && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            assignBMGToExistingProduct(
+                              product
+                            )
+                          }
+                          disabled={
+                            assigningMaterialId !==
+                            null
+                          }
+                          style={{
+                            width:
+                              "100%",
+
+                            marginTop:
+                              "12px",
+
+                            padding:
+                              "10px 12px",
+
+                            border:
+                              "none",
+
+                            borderRadius:
+                              "7px",
+
+                            background:
+                              isAssigning
+                                ? "#64748b"
+                                : "#123b70",
+
                             color:
-                              "#047857",
+                              "#ffffff",
+
+                            fontSize:
+                              "13px",
 
                             fontWeight:
                               700,
+
+                            cursor:
+                              assigningMaterialId !==
+                              null
+                                ? "not-allowed"
+                                : "pointer",
                           }}
                         >
-                          <strong>
-                            NCS:
-                          </strong>{" "}
-                          {product.bmg
-                            ?.ncs_name ||
-                            "Not assigned"}
-                        </div>
-                      </div>
-                    </button>
+                          {isAssigning
+                            ? "Assigning BMG..."
+                            : "Assign BMG"}
+                        </button>
+                      )}
+                    </div>
                   );
                 }
               )}
             </div>
 
             {/* ==================================================
-                SELECTED RECENT PRODUCT
+                SELECTED PRODUCT
             ================================================== */}
 
             {selectedRecentProduct && (
@@ -1689,7 +1760,7 @@ export default function TestUploadPage() {
                 <div
                   style={{
                     fontSize:
-                      "12px",
+                      "11px",
 
                     fontWeight:
                       700,
@@ -1903,26 +1974,22 @@ export default function TestUploadPage() {
                   "0 8px 30px rgba(15,23,42,0.06)",
               }}
             >
-              {/* ==================================================
-                  RESULT HEADER
-              ================================================== */}
-
               <div
                 style={{
                   display:
                     "flex",
 
-                  alignItems:
-                    "center",
-
                   justifyContent:
                     "space-between",
 
-                  gap:
-                    "20px",
+                  alignItems:
+                    "center",
 
                   marginBottom:
-                    "28px",
+                    "25px",
+
+                  gap:
+                    "20px",
 
                   flexWrap:
                     "wrap",
@@ -2020,10 +2087,6 @@ export default function TestUploadPage() {
                 </button>
               </div>
 
-              {/* ==================================================
-                  WORKFLOW STATUS
-              ================================================== */}
-
               <div
                 style={{
                   marginBottom:
@@ -2053,13 +2116,7 @@ export default function TestUploadPage() {
                 </strong>{" "}
                 {result.duplicate
                   ? "The existing product record was reused."
-                  : "The new product was saved."}{" "}
-                BMG Common Code:
-                <strong>
-                  {" "}
-                  {getBmgCommonCode()}
-                </strong>
-                .
+                  : "The new product was saved and standardized."}
               </div>
 
               {/* ==================================================
@@ -2102,9 +2159,7 @@ export default function TestUploadPage() {
                       result.savedData
                         ?.unique_product_code
                     }
-                    highlight={
-                      true
-                    }
+                    highlight
                   />
 
                   <InfoCard
@@ -2112,9 +2167,7 @@ export default function TestUploadPage() {
                     value={
                       getBmgCommonCode()
                     }
-                    commonCode={
-                      true
-                    }
+                    commonCode
                   />
 
                   <InfoCard
@@ -2122,9 +2175,7 @@ export default function TestUploadPage() {
                     value={
                       getNcsName()
                     }
-                    ncsName={
-                      true
-                    }
+                    ncsName
                   />
 
                   <InfoCard
@@ -2132,8 +2183,6 @@ export default function TestUploadPage() {
                     value={
                       result.savedData
                         ?.company ||
-                      result.savedData
-                        ?.company_name ||
                       result.structuredData
                         ?.company
                     }
@@ -2164,22 +2213,6 @@ export default function TestUploadPage() {
                         ?.material_name ||
                       result.structuredData
                         ?.material_name
-                    }
-                  />
-
-                  <InfoCard
-                    label="Material Family"
-                    value={
-                      result.structuredData
-                        ?.material_family
-                    }
-                  />
-
-                  <InfoCard
-                    label="Product Type"
-                    value={
-                      result.structuredData
-                        ?.product_type
                     }
                   />
 
@@ -2258,9 +2291,6 @@ export default function TestUploadPage() {
                   <InfoCard
                     label="City"
                     value={
-                      result.savedData
-                        ?.location
-                        ?.city ||
                       result.structuredData
                         ?.location
                         ?.city
@@ -2270,9 +2300,6 @@ export default function TestUploadPage() {
                   <InfoCard
                     label="State"
                     value={
-                      result.savedData
-                        ?.location
-                        ?.state ||
                       result.structuredData
                         ?.location
                         ?.state
@@ -2282,9 +2309,6 @@ export default function TestUploadPage() {
                   <InfoCard
                     label="Country"
                     value={
-                      result.savedData
-                        ?.location
-                        ?.country ||
                       result.structuredData
                         ?.location
                         ?.country
@@ -2294,9 +2318,6 @@ export default function TestUploadPage() {
                   <InfoCard
                     label="Postal Code"
                     value={
-                      result.savedData
-                        ?.location
-                        ?.postal_code ||
                       result.structuredData
                         ?.location
                         ?.postal_code
@@ -2365,9 +2386,7 @@ export default function TestUploadPage() {
                     value={
                       getBmgCommonCode()
                     }
-                    commonCode={
-                      true
-                    }
+                    commonCode
                   />
 
                   <InfoCard
@@ -2375,30 +2394,17 @@ export default function TestUploadPage() {
                     value={
                       getNcsName()
                     }
-                    ncsName={
-                      true
-                    }
+                    ncsName
                   />
 
                   <InfoCard
-                    label="BMG Assignment"
+                    label="Assignment"
                     value={
                       result.savedData
                         ?.action ||
                       (result.duplicate
                         ? "Existing Assignment"
                         : "AI Assigned")
-                    }
-                  />
-
-                  <InfoCard
-                    label="AI Confidence"
-                    value={
-                      result.savedData
-                        ?.ai_confidence !==
-                      undefined
-                        ? `${result.savedData.ai_confidence}%`
-                        : "Not available"
                     }
                   />
 
@@ -2422,223 +2428,28 @@ export default function TestUploadPage() {
                       padding:
                         "16px",
 
+                      background:
+                        "#f8fafc",
+
                       border:
                         "1px solid #e1e6ee",
 
                       borderRadius:
                         "10px",
 
-                      background:
-                        "#f8fafc",
+                      lineHeight:
+                        1.6,
                     }}
                   >
-                    <div
-                      style={{
-                        fontSize:
-                          "12px",
-
-                        fontWeight:
-                          700,
-
-                        color:
-                          "#667085",
-
-                        marginBottom:
-                          "7px",
-                      }}
-                    >
-                      AI Assignment Reason
-                    </div>
-
-                    <div
-                      style={{
-                        lineHeight:
-                          1.6,
-
-                        fontSize:
-                          "14px",
-                      }}
-                    >
-                      {
-                        result.savedData
-                          .ai_reason
-                      }
-                    </div>
+                    <strong>
+                      AI Reason:
+                    </strong>{" "}
+                    {
+                      result.savedData
+                        .ai_reason
+                    }
                   </div>
                 )}
-
-                {Array.isArray(
-                  result.savedData
-                    ?.matched_aspects
-                ) &&
-                  result.savedData
-                    .matched_aspects
-                    .length >
-                    0 && (
-                    <div
-                      style={{
-                        marginTop:
-                          "14px",
-
-                        padding:
-                          "16px",
-
-                        border:
-                          "1px solid #e1e6ee",
-
-                        borderRadius:
-                          "10px",
-
-                        background:
-                          "#f8fafc",
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize:
-                            "12px",
-
-                          fontWeight:
-                            700,
-
-                          color:
-                            "#667085",
-
-                          marginBottom:
-                            "8px",
-                        }}
-                      >
-                        Matched Technical Aspects
-                      </div>
-
-                      <div
-                        style={{
-                          display:
-                            "flex",
-
-                          flexWrap:
-                            "wrap",
-
-                          gap:
-                            "8px",
-                        }}
-                      >
-                        {result.savedData
-                          .matched_aspects
-                          .map(
-                            (
-                              item,
-                              index
-                            ) => (
-                              <span
-                                key={
-                                  index
-                                }
-                                style={{
-                                  padding:
-                                    "6px 10px",
-
-                                  borderRadius:
-                                    "20px",
-
-                                  background:
-                                    "#eef2ff",
-
-                                  border:
-                                    "1px solid #c7d2fe",
-
-                                  fontSize:
-                                    "12px",
-
-                                  fontWeight:
-                                    600,
-                                }}
-                              >
-                                {
-                                  item
-                                }
-                              </span>
-                            )
-                          )}
-                      </div>
-                    </div>
-                  )}
-
-                {Array.isArray(
-                  result.savedData
-                    ?.differences
-                ) &&
-                  result.savedData
-                    .differences
-                    .length >
-                    0 && (
-                    <div
-                      style={{
-                        marginTop:
-                          "14px",
-
-                        padding:
-                          "16px",
-
-                        border:
-                          "1px solid #e1e6ee",
-
-                        borderRadius:
-                          "10px",
-
-                        background:
-                          "#fff7ed",
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize:
-                            "12px",
-
-                          fontWeight:
-                            700,
-
-                          color:
-                            "#9a3412",
-
-                          marginBottom:
-                            "8px",
-                        }}
-                      >
-                        Technical Differences Considered
-                      </div>
-
-                      {result.savedData
-                        .differences
-                        .map(
-                          (
-                            item,
-                            index
-                          ) => (
-                            <div
-                              key={
-                                index
-                              }
-                              style={{
-                                padding:
-                                  "6px 0",
-
-                                fontSize:
-                                  "13px",
-
-                                lineHeight:
-                                  1.5,
-                              }}
-                            >
-                              •{" "}
-                              {
-                                item
-                              }
-                            </div>
-                          )
-                        )}
-                    </div>
-                  )}
               </section>
 
               {/* ==================================================
@@ -2738,58 +2549,10 @@ export default function TestUploadPage() {
                   />
 
                   <DetailCard
-                    label="Actuation"
-                    value={
-                      result.structuredData
-                        ?.actuation
-                    }
-                  />
-
-                  <DetailCard
                     label="Application"
                     value={
                       result.structuredData
                         ?.application
-                    }
-                  />
-
-                  <DetailCard
-                    label="Unit of Measure"
-                    value={
-                      result.structuredData
-                        ?.unit_of_measure
-                    }
-                  />
-
-                  <DetailCard
-                    label="Drawing Number"
-                    value={
-                      result.structuredData
-                        ?.drawing_number
-                    }
-                  />
-
-                  <DetailCard
-                    label="Revision"
-                    value={
-                      result.structuredData
-                        ?.revision
-                    }
-                  />
-
-                  <DetailCard
-                    label="Datasheet Number"
-                    value={
-                      result.structuredData
-                        ?.datasheet_number
-                    }
-                  />
-
-                  <DetailCard
-                    label="Design Code"
-                    value={
-                      result.structuredData
-                        ?.design_code
                     }
                   />
 
@@ -2800,9 +2563,7 @@ export default function TestUploadPage() {
                         .structuredData
                         ?.standards ||
                       []
-                    ).join(
-                      ", "
-                    )}
+                    ).join(", ")}
                   />
 
                   <DetailCard
@@ -2812,9 +2573,7 @@ export default function TestUploadPage() {
                         .structuredData
                         ?.end_connections ||
                       []
-                    ).join(
-                      ", "
-                    )}
+                    ).join(", ")}
                   />
                 </div>
               </section>
@@ -2878,14 +2637,15 @@ export default function TestUploadPage() {
                   }}
                 >
                   {formatJSON(
-                    result.structuredData
+                    result
+                      .structuredData
                       ?.dimensions
                   )}
                 </pre>
               </section>
 
               {/* ==================================================
-                  MATERIAL COMPONENTS
+                  MATERIALS
               ================================================== */}
 
               <section
@@ -2943,123 +2703,11 @@ export default function TestUploadPage() {
                   }}
                 >
                   {formatJSON(
-                    result.structuredData
+                    result
+                      .structuredData
                       ?.materials
                   )}
                 </pre>
-              </section>
-
-              {/* ==================================================
-                  DESIGN FEATURES
-              ================================================== */}
-
-              <section
-                style={{
-                  marginBottom:
-                    "30px",
-
-                  borderTop:
-                    "1px solid #e1e6ee",
-
-                  paddingTop:
-                    "28px",
-                }}
-              >
-                <h3
-                  style={{
-                    fontSize:
-                      "20px",
-
-                    margin:
-                      "0 0 16px",
-                  }}
-                >
-                  Design Features
-                </h3>
-
-                <div
-                  style={{
-                    display:
-                      "flex",
-
-                    flexDirection:
-                      "column",
-
-                    gap:
-                      "8px",
-                  }}
-                >
-                  {(
-                    result
-                      .structuredData
-                      ?.design_features ||
-                    []
-                  ).length >
-                  0 ? (
-                    result
-                      .structuredData
-                      .design_features
-                      .map(
-                        (
-                          feature,
-                          index
-                        ) => (
-                          <div
-                            key={
-                              index
-                            }
-                            style={{
-                              padding:
-                                "12px 14px",
-
-                              background:
-                                "#f8fafc",
-
-                              border:
-                                "1px solid #e1e6ee",
-
-                              borderRadius:
-                                "8px",
-
-                              fontSize:
-                                "14px",
-
-                              lineHeight:
-                                1.5,
-                            }}
-                          >
-                            {
-                              feature
-                            }
-                          </div>
-                        )
-                      )
-                  ) : (
-                    <div
-                      style={{
-                        padding:
-                          "12px 14px",
-
-                        color:
-                          "#667085",
-
-                        background:
-                          "#f8fafc",
-
-                        border:
-                          "1px solid #e1e6ee",
-
-                        borderRadius:
-                          "8px",
-                      }}
-                    >
-                      No design
-                      features
-                      explicitly
-                      extracted.
-                    </div>
-                  )}
-                </div>
               </section>
 
               {/* ==================================================
@@ -3068,9 +2716,6 @@ export default function TestUploadPage() {
 
               <section
                 style={{
-                  marginBottom:
-                    "30px",
-
                   borderTop:
                     "1px solid #e1e6ee",
 
@@ -3127,174 +2772,11 @@ export default function TestUploadPage() {
                   )}
                 </pre>
               </section>
-
-              {/* ==================================================
-                  DATABASE / SOURCE
-              ================================================== */}
-
-              <section
-                style={{
-                  borderTop:
-                    "1px solid #e1e6ee",
-
-                  paddingTop:
-                    "28px",
-                }}
-              >
-                <h3
-                  style={{
-                    fontSize:
-                      "20px",
-
-                    margin:
-                      "0 0 16px",
-                  }}
-                >
-                  Database & Source
-                </h3>
-
-                <div
-                  style={{
-                    display:
-                      "grid",
-
-                    gridTemplateColumns:
-                      "repeat(auto-fit, minmax(230px, 1fr))",
-
-                    gap:
-                      "14px",
-                  }}
-                >
-                  <InfoCard
-                    label="Datasheet ID"
-                    value={
-                      result.savedData
-                        ?.datasheet_id
-                    }
-                  />
-
-                  <InfoCard
-                    label="Storage Path"
-                    value={
-                      result.savedData
-                        ?.storage_path ||
-                      result.savedData
-                        ?.file_path
-                    }
-                  />
-
-                  <InfoCard
-                    label="Product Fingerprint"
-                    value={
-                      result.savedData
-                        ?.fingerprint ||
-                      result.savedData
-                        ?.product_fingerprint
-                    }
-                  />
-
-                  <InfoCard
-                    label="Unique Product Code"
-                    value={
-                      result.savedData
-                        ?.unique_product_code
-                    }
-                  />
-
-                  <InfoCard
-                    label="BMG Common Code"
-                    value={
-                      getBmgCommonCode()
-                    }
-                    commonCode={
-                      true
-                    }
-                  />
-
-                  <InfoCard
-                    label="NCS Status"
-                    value={
-                      result.savedData
-                        ?.bmg_status ||
-                      "PROPOSED"
-                    }
-                  />
-
-                  <InfoCard
-                    label="Comparison"
-                    value="NOT STARTED"
-                  />
-                </div>
-              </section>
-
-              {/* ==================================================
-                  RAW AI JSON
-              ================================================== */}
-
-              <section
-                style={{
-                  marginTop:
-                    "30px",
-
-                  borderTop:
-                    "1px solid #e1e6ee",
-
-                  paddingTop:
-                    "28px",
-                }}
-              >
-                <h3
-                  style={{
-                    fontSize:
-                      "20px",
-
-                    margin:
-                      "0 0 16px",
-                  }}
-                >
-                  Complete Extracted Data
-                </h3>
-
-                <div
-                  style={{
-                    background:
-                      "#0f172a",
-
-                    color:
-                      "#e2e8f0",
-
-                    borderRadius:
-                      "10px",
-
-                    padding:
-                      "20px",
-
-                    overflow:
-                      "auto",
-
-                    fontSize:
-                      "13px",
-
-                    lineHeight:
-                      1.65,
-
-                    whiteSpace:
-                      "pre-wrap",
-
-                    maxHeight:
-                      "700px",
-                  }}
-                >
-                  {formatJSON(
-                    result.structuredData
-                  )}
-                </div>
-              </section>
             </section>
           )}
 
         {/* ======================================================
-            EXCEL RESULT
+            EXCEL
         ====================================================== */}
 
         {result &&
@@ -3316,9 +2798,6 @@ export default function TestUploadPage() {
 
                 padding:
                   "30px",
-
-                boxShadow:
-                  "0 8px 30px rgba(15,23,42,0.06)",
               }}
             >
               <div
@@ -3334,54 +2813,16 @@ export default function TestUploadPage() {
 
                   marginBottom:
                     "20px",
-
-                  gap:
-                    "20px",
-
-                  flexWrap:
-                    "wrap",
                 }}
               >
-                <div>
-                  <div
-                    style={{
-                      display:
-                        "inline-block",
-
-                      padding:
-                        "6px 12px",
-
-                      borderRadius:
-                        "20px",
-
-                      background:
-                        "#eff6ff",
-
-                      color:
-                        "#1d4ed8",
-
-                      fontSize:
-                        "12px",
-
-                      fontWeight:
-                        700,
-
-                      marginBottom:
-                        "10px",
-                    }}
-                  >
-                    ✓ EXTRACTED
-                  </div>
-
-                  <h2
-                    style={{
-                      margin:
-                        0,
-                    }}
-                  >
-                    Excel Datasheet
-                  </h2>
-                </div>
+                <h2
+                  style={{
+                    margin:
+                      0,
+                  }}
+                >
+                  Excel Datasheet
+                </h2>
 
                 <button
                   onClick={
@@ -3409,8 +2850,7 @@ export default function TestUploadPage() {
               </div>
 
               {Object.entries(
-                result.sheets ||
-                  {}
+                result.sheets || {}
               ).map(
                 ([
                   sheetName,
@@ -3431,7 +2871,7 @@ export default function TestUploadPage() {
                       }
                     </h3>
 
-                    <div
+                    <pre
                       style={{
                         background:
                           "#0f172a",
@@ -3450,18 +2890,12 @@ export default function TestUploadPage() {
 
                         maxHeight:
                           "500px",
-
-                        fontSize:
-                          "13px",
-
-                        whiteSpace:
-                          "pre-wrap",
                       }}
                     >
                       {formatJSON(
                         rows
                       )}
-                    </div>
+                    </pre>
                   </div>
                 )
               )}
