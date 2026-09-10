@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../../context/AppContext';
+import { supabase } from '../../../lib/supabase';
+
 import {
   AshokaEmblem,
-  BMGNationalSeal,
   DigitalIndiaLogo,
   MakeInIndiaLogo,
-  CPSEBrandBadge
+  CPSEBrandBadge,
 } from '../common/GovernmentLogos';
+
 import {
   Lock,
   Mail,
@@ -16,596 +18,1470 @@ import {
   ShieldCheck,
   RefreshCw,
   ArrowRight,
-  HelpCircle,
   AlertCircle,
   CheckCircle2,
   Home,
-  UserCheck,
-  Phone,
-  Sparkles,
+  Building2,
+  Landmark,
+  UserRound,
   KeyRound,
-  Fingerprint
+  Fingerprint,
+  ChevronLeft,
+  Globe2,
+  BadgeCheck,
 } from 'lucide-react';
+
 import { AnimatedButton } from '../ui/AnimatedButton';
 
+type PortalType = 'select' | 'user' | 'government';
+
+type UserProfile = {
+  user_id: string;
+  email: string;
+  full_name: string;
+  user_type: 'GOVERNMENT' | 'COMPANY';
+  role: string;
+  company_name: string | null;
+  is_active: boolean;
+};
+
 export const LoginView: React.FC = () => {
-  const { setCurrentTab, setCurrentUserRole, addToast } = useApp();
+  const {
+    setCurrentTab,
+    setCurrentUserRole,
+    addToast,
+  } = useApp();
 
-  const [loginTab, setLoginTab] = useState<'cpse' | 'procurement' | 'admin' | 'demo'>('demo');
-  const [loginId, setLoginId] = useState('officer@iocl.co.in');
-  const [password, setPassword] = useState('Password@2026');
-  const [showPassword, setShowPassword] = useState(false);
-  const [captchaCode, setCaptchaCode] = useState('7B8Y9K');
-  const [captchaInput, setCaptchaInput] = useState('');
-  const [rememberMe, setRememberMe] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isCaptchaSpinning, setIsCaptchaSpinning] = useState(false);
+  const [portal, setPortal] =
+    useState<PortalType>('select');
 
-  // Generate a random 6-character alphanumeric captcha with animation
+  const isGovernment = portal === 'government';
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] =
+    useState('');
+  const [showPassword, setShowPassword] =
+    useState(false);
+  const [rememberMe, setRememberMe] =
+    useState(true);
+
+  const [captchaCode, setCaptchaCode] =
+    useState('7B8Y9K');
+  const [captchaInput, setCaptchaInput] =
+    useState('');
+  const [
+    isCaptchaSpinning,
+    setIsCaptchaSpinning,
+  ] = useState(false);
+
+  const [isLoading, setIsLoading] =
+    useState(false);
+  const [isSuccess, setIsSuccess] =
+    useState(false);
+  const [errorMessage, setErrorMessage] =
+    useState<string | null>(null);
+
   const generateNewCaptcha = () => {
     setIsCaptchaSpinning(true);
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+    const chars =
+      'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
     let code = '';
+
     for (let i = 0; i < 6; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
+      code += chars.charAt(
+        Math.floor(
+          Math.random() * chars.length
+        )
+      );
     }
-    setTimeout(() => {
+
+    window.setTimeout(() => {
       setCaptchaCode(code);
       setCaptchaInput('');
       setIsCaptchaSpinning(false);
     }, 250);
   };
 
-  const handleRolePreset = (
-    role: string,
-    email: string,
-    tabName: 'cpse' | 'procurement' | 'admin' | 'demo'
-  ) => {
-    setLoginTab(tabName);
-    setLoginId(email);
-    setPassword('••••••••••••');
-    setCaptchaInput(captchaCode);
+  const resetLogin = () => {
+    setPortal('select');
+    setEmail('');
+    setPassword('');
+    setCaptchaInput('');
+    setErrorMessage(null);
+    setIsLoading(false);
+    setIsSuccess(false);
+    setShowPassword(false);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const openUserPortal = () => {
+    setPortal('user');
+    setEmail('');
+    setPassword('');
+    setCaptchaInput('');
     setErrorMessage(null);
+    setIsSuccess(false);
+  };
 
-    if (!loginId.trim() || !password.trim()) {
-      setErrorMessage('Please enter your Official Login ID and Password.');
-      return;
-    }
+  const openGovernmentPortal = () => {
+    setPortal('government');
+    setEmail('');
+    setPassword('');
+    setCaptchaInput('');
+    setErrorMessage(null);
+    setIsSuccess(false);
+  };
 
-    if (loginTab !== 'demo' && captchaInput.trim().toUpperCase() !== captchaCode.toUpperCase()) {
-      setErrorMessage('Invalid Captcha code entered. Please re-enter the characters shown in the box.');
-      generateNewCaptcha();
-      return;
-    }
+  const validateGovernmentEmail = (
+    value: string
+  ) => {
+    return /^[^\s@]+@gov\.in$/i.test(
+      value.trim()
+    );
+  };
 
-    setIsLoading(true);
+  const validateUserEmail = (
+    value: string
+  ) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(
+      value.trim()
+    );
+  };
 
-    setTimeout(() => {
-      setIsLoading(false);
-      setIsSuccess(true);
+  const loadUserProfile = async (): Promise<{
+    success: boolean;
+    profile?: UserProfile;
+    error?: string;
+  }> => {
+    try {
+      const response = await fetch(
+        '/api/auth/profile',
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store',
+        }
+      );
 
-      // Set role according to credentials/tab
-      if (loginId.includes('iocl')) {
-        setCurrentUserRole('CPSE Administrator (IOCL)');
-      } else if (loginId.includes('ongc')) {
-        setCurrentUserRole('CPSE Administrator (ONGC)');
-      } else if (loginTab === 'procurement') {
-        setCurrentUserRole('Procurement Officer');
-      } else {
-        setCurrentUserRole('National Administrator');
+      const result = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error:
+            result?.error ||
+            'Unable to load account profile.',
+        };
       }
 
-      addToast({
-        title: 'Authentication Successful',
-        message: 'Welcome to Bharat Material Grid Sovereign Portal',
-        type: 'success'
-      });
+      if (!result?.profile) {
+        return {
+          success: false,
+          error:
+            'Your account profile has not been configured.',
+        };
+      }
 
-      setTimeout(() => {
-        window.history.pushState({}, '', '/');
-        setCurrentTab('dashboard');
-      }, 700);
-    }, 900);
+      return {
+        success: true,
+        profile: result.profile,
+      };
+    } catch (error) {
+      console.error(
+        'Profile API error:',
+        error
+      );
+
+      return {
+        success: false,
+        error:
+          'Unable to verify your account profile.',
+      };
+    }
   };
 
-  // Instant 1-Click Login for Demo Evaluators
-  const handleQuickDemoLogin = (role: string, email: string) => {
+  const handleSubmit = async (
+    e: React.FormEvent
+  ) => {
+    e.preventDefault();
+
+    setErrorMessage(null);
+
+    const normalizedEmail =
+      email.trim().toLowerCase();
+
+    if (
+      !normalizedEmail ||
+      !password.trim()
+    ) {
+      setErrorMessage(
+        'Please enter your email address and password.'
+      );
+      return;
+    }
+
+    if (isGovernment) {
+      if (
+        !validateGovernmentEmail(
+          normalizedEmail
+        )
+      ) {
+        setErrorMessage(
+          'Government access requires an official @gov.in email address.'
+        );
+        return;
+      }
+    } else {
+      if (
+        !validateUserEmail(
+          normalizedEmail
+        )
+      ) {
+        setErrorMessage(
+          'Please enter a valid company or user email address.'
+        );
+        return;
+      }
+    }
+
+    if (
+      captchaInput.trim().toUpperCase() !==
+      captchaCode.toUpperCase()
+    ) {
+      setErrorMessage(
+        'Invalid security code. Please enter the characters shown.'
+      );
+
+      generateNewCaptcha();
+
+      return;
+    }
+
     setIsLoading(true);
-    setTimeout(() => {
+
+    try {
+      /*
+       * =====================================================
+       * 1. AUTHENTICATE WITH SUPABASE
+       * =====================================================
+       */
+
+      const {
+        data,
+        error,
+      } =
+        await supabase.auth.signInWithPassword(
+          {
+            email: normalizedEmail,
+            password,
+          }
+        );
+
+      if (error) {
+        console.error(
+          'Supabase login error:',
+          error
+        );
+
+        setErrorMessage(
+          error.message ===
+            'Invalid login credentials'
+            ? 'Invalid email or password.'
+            : error.message
+        );
+
+        setIsLoading(false);
+
+        return;
+      }
+
+      if (!data.user) {
+        setErrorMessage(
+          'Authentication completed but no user account was returned.'
+        );
+
+        setIsLoading(false);
+
+        return;
+      }
+
+      /*
+       * =====================================================
+       * 2. LOAD REAL DATABASE PROFILE
+       * =====================================================
+       */
+
+      const profileResult =
+        await loadUserProfile();
+
+      if (
+        !profileResult.success ||
+        !profileResult.profile
+      ) {
+        await supabase.auth.signOut();
+
+        setErrorMessage(
+          profileResult.error ||
+            'Your account profile could not be verified.'
+        );
+
+        setIsLoading(false);
+
+        return;
+      }
+
+      const profile =
+        profileResult.profile;
+
+      /*
+       * =====================================================
+       * 3. VERIFY PORTAL TYPE
+       * =====================================================
+       */
+
+      if (isGovernment) {
+        /*
+         * Government portal:
+         *
+         * Must be:
+         * GOVERNMENT
+         * AND
+         * @gov.in
+         */
+
+        if (
+          profile.user_type !==
+          'GOVERNMENT'
+        ) {
+          await supabase.auth.signOut();
+
+          setErrorMessage(
+            'This account is not registered as a Government account. Please use the User / Company Portal.'
+          );
+
+          setIsLoading(false);
+
+          return;
+        }
+
+        if (
+          !validateGovernmentEmail(
+            profile.email
+          )
+        ) {
+          await supabase.auth.signOut();
+
+          setErrorMessage(
+            'Government accounts must use an official @gov.in email address.'
+          );
+
+          setIsLoading(false);
+
+          return;
+        }
+      } else {
+        /*
+         * User / Company portal:
+         *
+         * Must be:
+         * COMPANY
+         */
+
+        if (
+          profile.user_type !==
+          'COMPANY'
+        ) {
+          await supabase.auth.signOut();
+
+          setErrorMessage(
+            'This account is registered for the Government Portal. Please use the Government Portal.'
+          );
+
+          setIsLoading(false);
+
+          return;
+        }
+      }
+
+      /*
+       * =====================================================
+       * 4. VERIFY ACTIVE ACCOUNT
+       * =====================================================
+       */
+
+      if (!profile.is_active) {
+        await supabase.auth.signOut();
+
+        setErrorMessage(
+          'Your account is currently inactive. Please contact the system administrator.'
+        );
+
+        setIsLoading(false);
+
+        return;
+      }
+
+      /*
+       * =====================================================
+       * 5. APPLY REAL DATABASE ROLE
+       * =====================================================
+       *
+       * IMPORTANT:
+       * No hardcoded IOCL or Government role.
+       * The role now comes from user_profiles.role.
+       */
+
+      setCurrentUserRole(
+        profile.role as any
+      );
+
+      /*
+       * =====================================================
+       * 6. SUCCESS
+       * =====================================================
+       */
+
       setIsLoading(false);
       setIsSuccess(true);
-      setCurrentUserRole(role as any);
+
       addToast({
-        title: 'Instant Authentication Granted',
-        message: `Logged in as ${role}`,
-        type: 'success'
+        title: isGovernment
+          ? 'Government Authentication Successful'
+          : 'Authentication Successful',
+
+        message: isGovernment
+          ? `Welcome ${profile.full_name}. Government portal access verified.`
+          : `Welcome ${profile.full_name}. ${profile.company_name ? `${profile.company_name} workspace access verified.` : 'Company workspace access verified.'}`,
+
+        type: 'success',
       });
-      setTimeout(() => {
+
+      window.setTimeout(() => {
+        window.history.pushState(
+          {},
+          '',
+          '/'
+        );
+
         setCurrentTab('dashboard');
-      }, 500);
-    }, 600);
+      }, 700);
+
+    } catch (error: any) {
+      console.error(
+        'Unexpected authentication error:',
+        error
+      );
+
+      setErrorMessage(
+        error?.message ||
+          'Unable to authenticate at this time. Please try again.'
+      );
+
+      setIsLoading(false);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-radial from-slate-900 via-[#001730] to-[#000d1a] flex flex-col justify-between selection:bg-amber-500 selection:text-slate-950 relative overflow-hidden">
-      {/* Dynamic Animated Ambient Background Lights */}
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none animate-pulse" />
-      <div className="absolute bottom-10 right-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
+    <div className="min-h-screen bg-[#f4f7fb] text-slate-900 flex flex-col overflow-hidden">
 
-      {/* 1. TOP INDIAN TRICOLOR ACCENT */}
-      <div className="h-1.5 w-full flex z-10">
+      {/* TOP TRICOLOR STRIP */}
+      <div className="h-1.5 w-full flex shrink-0">
         <div className="flex-1 bg-[#FF9933]" />
-        <div className="flex-1 bg-[#FFFFFF] border-y border-slate-200" />
+        <div className="flex-1 bg-white border-y border-slate-200" />
         <div className="flex-1 bg-[#138808]" />
       </div>
 
-      {/* 2. GOVERNMENT UTILITY HEADER */}
-      <header className="bg-[#001f3f]/80 backdrop-blur-md text-white py-2.5 px-4 sm:px-8 border-b border-slate-700/50 flex items-center justify-between text-xs select-none z-10">
-        <div className="flex items-center gap-2 font-medium">
-          <span className="text-sm">🇮🇳</span>
-          <span className="font-bold tracking-wide">भारत सरकार | Government of India</span>
-          <span className="hidden sm:inline text-slate-400">• भारी उद्योग मंत्रालय (Ministry of Heavy Industries)</span>
-        </div>
-        <div className="flex items-center gap-3 text-slate-300 text-xs">
-          <motion.button
-            whileHover={{ scale: 1.05, x: -2 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setCurrentTab('home')}
-            className="flex items-center gap-1.5 bg-slate-800/80 hover:bg-amber-500 hover:text-slate-950 px-3 py-1 rounded-md text-amber-300 border border-slate-600 transition-all cursor-pointer font-bold shadow-xs"
+      {/* HEADER */}
+      <header className="bg-[#001f3f] text-white border-b border-[#0b355d]">
+        <div className="max-w-[1500px] mx-auto px-4 sm:px-6 lg:px-10 py-3 flex items-center justify-between gap-4">
+
+          <div className="flex items-center gap-3 min-w-0">
+
+            <div className="shrink-0">
+              <AshokaEmblem
+                size={42}
+                color="#ffffff"
+                goldTone={true}
+              />
+            </div>
+
+            <div className="min-w-0">
+
+              <div className="flex items-center gap-2 flex-wrap">
+
+                <h1 className="text-base sm:text-lg font-black tracking-tight">
+                  भारत मटेरियल ग्रिड
+                </h1>
+
+                <span className="hidden sm:inline-flex px-2 py-0.5 rounded border border-amber-400/40 bg-amber-400/10 text-[9px] font-black tracking-wider text-amber-300 uppercase">
+                  Bharat Material Grid
+                </span>
+
+              </div>
+
+              <p className="text-[10px] sm:text-xs text-slate-300 mt-0.5">
+                National Material Harmonization & Intelligence Platform
+              </p>
+
+            </div>
+
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              setCurrentTab('home')
+            }
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-600 bg-[#002b50] hover:bg-amber-500 hover:text-slate-950 transition-all text-xs font-bold shrink-0"
           >
             <Home className="w-3.5 h-3.5" />
-            <span>Return to Public Portal</span>
-          </motion.button>
+
+            <span className="hidden sm:inline">
+              Public Portal
+            </span>
+          </button>
+
         </div>
       </header>
 
-      {/* 3. MAIN LOGIN CONTAINER WITH COOL MOTION ANIMATIONS */}
-      <main className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8 z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 30, scale: 0.97 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
-          className="w-full max-w-5xl bg-white border border-slate-300/80 rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-12"
-        >
-          {/* LEFT COLUMN: Sovereign Branding, Animated Seal & Quick Access (5 Cols) */}
-          <div className="lg:col-span-5 bg-gradient-to-br from-[#002244] via-[#001a38] to-[#0a1128] text-white p-6 sm:p-8 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-slate-800 relative overflow-hidden">
-            {/* Ambient Radial Accent */}
-            <div className="absolute -top-12 -left-12 w-48 h-48 bg-amber-500/20 rounded-full blur-2xl pointer-events-none" />
-            <div className="absolute inset-0 bg-grid-pattern opacity-10 pointer-events-none" />
+      {/* MAIN */}
+      <main className="flex-1 flex items-center justify-center px-4 py-8 sm:px-6 lg:px-8 relative">
 
-            <div className="relative z-10 space-y-6">
-              {/* Sovereign State Emblem with Gentle Hover Pulse */}
-              <div className="flex items-center gap-4">
-                <motion.div
-                  whileHover={{ scale: 1.06, rotate: 3 }}
-                  transition={{ type: 'spring', stiffness: 400 }}
-                  className="relative p-1 rounded-full bg-gradient-to-br from-amber-400/30 via-transparent to-emerald-400/20 shadow-md"
-                >
-                  <AshokaEmblem size={56} color="#ffffff" goldTone={true} className="drop-shadow-lg shrink-0" />
-                </motion.div>
-                <div>
-                  <h1 className="text-xl font-black tracking-tight text-white font-display">
-                    भारत मटेरियल ग्रिड
-                  </h1>
-                  <div className="text-[10px] font-black text-amber-400 font-mono tracking-wider uppercase">
-                    BHARAT MATERIAL GRID (BMG)
-                  </div>
-                  <p className="text-[11px] text-slate-300 font-medium">
-                    National Parichay SSO Sovereign Gateway
-                  </p>
-                </div>
-              </div>
+        <div className="absolute top-0 left-0 w-96 h-96 bg-blue-100/50 rounded-full blur-3xl pointer-events-none" />
 
-              {/* Description */}
-              <div className="space-y-2 border-t border-slate-700/80 pt-4">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300 font-mono uppercase tracking-wider">
-                  <Fingerprint className="w-4 h-4 text-emerald-400" />
-                  <span>Verified CPSE Access</span>
-                </div>
-                <h2 className="text-base font-bold text-white leading-snug">
-                  National CPSE Material Harmonization & Rate Contract Pooling
-                </h2>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  Authorized cryptographic gateway for Maharatna and Navratna enterprises: IndianOil, ONGC, SAIL, NTPC, BHEL, GAIL, and Ministry Officers.
-                </p>
-              </div>
+        <div className="absolute bottom-0 right-0 w-96 h-96 bg-amber-100/40 rounded-full blur-3xl pointer-events-none" />
 
-              {/* 1-Click Demo Evaluation Quick Access with Cool Motion Cards */}
-              <div className="p-4 bg-gradient-to-b from-amber-500/15 to-transparent border border-amber-400/30 rounded-2xl space-y-3 shadow-inner">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-amber-300 text-xs font-bold font-mono">
-                    <Sparkles className="w-4 h-4 text-amber-400 animate-spin" style={{ animationDuration: '4s' }} />
-                    <span>EVALUATION 1-CLICK QUICK ACCESS</span>
-                  </div>
-                  <span className="text-[9px] font-mono text-emerald-300 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">
-                    Live Demo
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-300 leading-snug">
-                  Instant one-click authentication for review and evaluation:
-                </p>
+        <div className="relative z-10 w-full max-w-6xl">
 
-                <div className="grid grid-cols-1 gap-2">
-                  <motion.button
-                    whileHover={{ scale: 1.02, x: 2 }}
-                    whileTap={{ scale: 0.98 }}
-                    type="button"
-                    onClick={() =>
-                      handleQuickDemoLogin(
-                        'National Administrator',
-                        'admin.national@bmg.gov.in'
-                      )
-                    }
-                    className="w-full bg-[#002f5e]/90 hover:bg-amber-400 hover:text-[#001730] text-white border border-slate-600/80 font-bold text-xs py-2 px-3 rounded-xl transition-all flex items-center justify-between cursor-pointer shadow-xs group"
-                  >
-                    <span className="flex items-center gap-2">
-                      <span>🏛️</span>
-                      <span>National Administrator (Ministry)</span>
-                    </span>
-                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-                  </motion.button>
+          {/* =================================================
+              PORTAL SELECTION
+          ================================================= */}
 
-                  <motion.button
-                    whileHover={{ scale: 1.02, x: 2 }}
-                    whileTap={{ scale: 0.98 }}
-                    type="button"
-                    onClick={() =>
-                      handleQuickDemoLogin(
-                        'CPSE Administrator (IOCL)',
-                        'r.sharma@iocl.co.in'
-                      )
-                    }
-                    className="w-full bg-[#002f5e]/90 hover:bg-amber-400 hover:text-[#001730] text-white border border-slate-600/80 font-bold text-xs py-2 px-3 rounded-xl transition-all flex items-center justify-between cursor-pointer shadow-xs group"
-                  >
-                    <span className="flex items-center gap-2">
-                      <span>🛢️</span>
-                      <span>IndianOil Nodal Officer (IOCL)</span>
-                    </span>
-                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-                  </motion.button>
+          {portal === 'select' && (
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 25,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+              }}
+              transition={{
+                duration: 0.45,
+              }}
+              className="bg-white border border-slate-200 rounded-3xl shadow-xl overflow-hidden"
+            >
 
-                  <motion.button
-                    whileHover={{ scale: 1.02, x: 2 }}
-                    whileTap={{ scale: 0.98 }}
-                    type="button"
-                    onClick={() =>
-                      handleQuickDemoLogin(
-                        'Procurement Officer',
-                        'procurement@ongc.co.in'
-                      )
-                    }
-                    className="w-full bg-[#002f5e]/90 hover:bg-amber-400 hover:text-[#001730] text-white border border-slate-600/80 font-bold text-xs py-2 px-3 rounded-xl transition-all flex items-center justify-between cursor-pointer shadow-xs group"
-                  >
-                    <span className="flex items-center gap-2">
-                      <span>💰</span>
-                      <span>Joint Tender & Procurement Officer</span>
-                    </span>
-                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-                  </motion.button>
-                </div>
-              </div>
-            </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2">
 
-            {/* Bottom Security Info with Pulsing Shield */}
-            <div className="pt-4 mt-4 border-t border-slate-800 text-[11px] text-slate-400 space-y-2">
-              <div className="flex items-center gap-2 text-emerald-400 font-mono">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                </span>
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>HSM RSA-4096 Sovereign Cloud Verified</span>
-              </div>
-              <p className="text-[10px] text-slate-400 leading-tight">
-                Designed & Hosted by NIC. Governed under DPDP Act 2023.
-              </p>
-            </div>
-          </div>
+                {/* LEFT */}
+                <div className="bg-gradient-to-br from-[#002244] via-[#001b38] to-[#001226] text-white p-7 sm:p-10 lg:p-12">
 
-          {/* RIGHT COLUMN: Official Login Form (7 Cols) */}
-          <div className="lg:col-span-7 p-6 sm:p-8 lg:p-10 flex flex-col justify-between bg-white">
-            <div className="max-w-md mx-auto w-full space-y-5">
-              {/* Header Title & Parichay Badge */}
-              <div className="space-y-1.5">
-                <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-xs font-mono font-bold">
-                  <Lock className="w-3 h-3 text-amber-800" />
-                  <span>Parichay / Jan Parichay SSO</span>
-                </div>
-                <h2 className="text-xl sm:text-2xl font-black text-[#002244] font-display">
-                  Sovereign Officer Sign In
-                </h2>
-                <p className="text-xs text-slate-600">
-                  Enter your registered official CPSE email credentials and security captcha.
-                </p>
-              </div>
+                  <div className="flex items-center gap-4">
 
-              {/* Login Role Preset Tabs with Spring Animation */}
-              <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs">
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  type="button"
-                  onClick={() =>
-                    handleRolePreset(
-                      'CPSE Administrator (IOCL)',
-                      'r.sharma@iocl.co.in',
-                      'cpse'
-                    )
-                  }
-                  className={`flex-1 py-2 px-2 rounded-lg font-bold text-center transition-all cursor-pointer ${
-                    loginTab === 'cpse'
-                      ? 'bg-[#002244] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  CPSE Nodal
-                </motion.button>
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  type="button"
-                  onClick={() =>
-                    handleRolePreset(
-                      'Procurement Officer',
-                      'procurement@cpse.gov.in',
-                      'procurement'
-                    )
-                  }
-                  className={`flex-1 py-2 px-2 rounded-lg font-bold text-center transition-all cursor-pointer ${
-                    loginTab === 'procurement'
-                      ? 'bg-[#002244] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Procurement
-                </motion.button>
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  type="button"
-                  onClick={() =>
-                    handleRolePreset(
-                      'National Administrator',
-                      'admin.national@bmg.gov.in',
-                      'admin'
-                    )
-                  }
-                  className={`flex-1 py-2 px-2 rounded-lg font-bold text-center transition-all cursor-pointer ${
-                    loginTab === 'admin'
-                      ? 'bg-[#002244] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Ministry
-                </motion.button>
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  type="button"
-                  onClick={() => setLoginTab('demo')}
-                  className={`flex-1 py-2 px-2 rounded-lg font-bold text-center transition-all cursor-pointer ${
-                    loginTab === 'demo'
-                      ? 'bg-amber-500 text-[#001730] shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  ⚡ Quick
-                </motion.button>
-              </div>
+                    <div className="w-14 h-14 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center">
 
-              {/* Error Message with AnimatePresence */}
-              <AnimatePresence>
-                {errorMessage && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2.5 text-xs text-red-800"
-                  >
-                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                    <div className="font-semibold">{errorMessage}</div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                      <AshokaEmblem
+                        size={44}
+                        color="#ffffff"
+                        goldTone={true}
+                      />
 
-              {/* The Form */}
-              <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Email / Official Login ID */}
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-800 flex items-center justify-between">
-                    <span>Official Email / Login ID</span>
-                    <span className="text-[10px] text-slate-500 font-mono">@iocl / @ongc / @gov.in</span>
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                      <Mail className="w-4 h-4" />
                     </div>
-                    <input
-                      type="text"
-                      required
-                      value={loginId}
-                      onChange={e => setLoginId(e.target.value)}
-                      placeholder="nodal.officer@cpse.gov.in"
-                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all"
-                    />
+
+                    <div>
+
+                      <div className="text-[10px] text-amber-300 font-black tracking-[0.18em] uppercase">
+                        Secure Access Gateway
+                      </div>
+
+                      <h2 className="text-2xl sm:text-3xl font-black mt-1">
+                        Choose your portal
+                      </h2>
+
+                    </div>
+
                   </div>
+
+                  <div className="mt-8 space-y-5">
+
+                    <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl">
+                      Bharat Material Grid provides separate secure workspaces for participating users, companies, CPSEs and authorized Government of India officials.
+                    </p>
+
+                    <div className="grid grid-cols-3 gap-2.5">
+
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+
+                        <Fingerprint className="w-5 h-5 text-emerald-400" />
+
+                        <div className="text-[10px] font-bold text-slate-300 mt-2">
+                          Secure
+                        </div>
+
+                      </div>
+
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+
+                        <ShieldCheck className="w-5 h-5 text-amber-400" />
+
+                        <div className="text-[10px] font-bold text-slate-300 mt-2">
+                          Role Based
+                        </div>
+
+                      </div>
+
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+
+                        <BadgeCheck className="w-5 h-5 text-blue-400" />
+
+                        <div className="text-[10px] font-bold text-slate-300 mt-2">
+                          Verified
+                        </div>
+
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                  <div className="mt-10 pt-5 border-t border-white/10">
+
+                    <div className="text-[10px] font-black text-slate-400 tracking-wider uppercase">
+                      Bharat Material Grid
+                    </div>
+
+                    <div className="text-xs text-slate-300 mt-1">
+                      National digital infrastructure for material standardization and intelligent procurement.
+                    </div>
+
+                  </div>
+
                 </div>
 
-                {/* Password */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-800">Password</label>
-                    <button
+                {/* RIGHT */}
+                <div className="p-6 sm:p-8 lg:p-10 bg-[#fbfdff]">
+
+                  <div className="mb-7">
+
+                    <div className="text-[10px] font-black text-blue-700 uppercase tracking-[0.16em]">
+                      ACCESS PORTAL
+                    </div>
+
+                    <h3 className="text-xl sm:text-2xl font-black text-[#002244] mt-1">
+                      How would you like to sign in?
+                    </h3>
+
+                    <p className="text-xs sm:text-sm text-slate-500 mt-2">
+                      Select the workspace that matches your organization.
+                    </p>
+
+                  </div>
+
+                  <div className="space-y-4">
+
+                    {/* USER */}
+                    <motion.button
                       type="button"
-                      onClick={() =>
-                        addToast({
-                          title: 'Password Reset Notification',
-                          message: 'OTP sent to registered CPSE mobile number.',
-                          type: 'info'
-                        })
+                      whileHover={{
+                        y: -3,
+                      }}
+                      whileTap={{
+                        scale: 0.98,
+                      }}
+                      onClick={
+                        openUserPortal
                       }
-                      className="text-[11px] font-semibold text-blue-800 hover:underline cursor-pointer"
+                      className="w-full text-left rounded-2xl border border-blue-200 bg-white hover:border-blue-400 hover:shadow-lg transition-all p-5 group"
                     >
-                      Forgot password?
-                    </button>
+
+                      <div className="flex items-start gap-4">
+
+                        <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-700 border border-blue-100 flex items-center justify-center shrink-0">
+                          <Building2 className="w-6 h-6" />
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+
+                          <div className="flex items-center justify-between gap-3">
+
+                            <h4 className="font-black text-base text-slate-900">
+                              User / Company Portal
+                            </h4>
+
+                            <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-blue-700 group-hover:translate-x-1 transition-all" />
+
+                          </div>
+
+                          <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                            For CPSEs, participating companies, procurement teams and authorized users.
+                          </p>
+
+                          <div className="flex items-center gap-2 mt-3 flex-wrap">
+
+                            <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-100">
+                              MATERIAL SEARCH
+                            </span>
+
+                            <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-slate-50 text-slate-600 border border-slate-200">
+                              DATASHEETS
+                            </span>
+
+                            <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-slate-50 text-slate-600 border border-slate-200">
+                              PROCUREMENT
+                            </span>
+
+                          </div>
+
+                        </div>
+
+                      </div>
+
+                    </motion.button>
+
+                    {/* GOVERNMENT */}
+                    <motion.button
+                      type="button"
+                      whileHover={{
+                        y: -3,
+                      }}
+                      whileTap={{
+                        scale: 0.98,
+                      }}
+                      onClick={
+                        openGovernmentPortal
+                      }
+                      className="w-full text-left rounded-2xl border border-amber-200 bg-gradient-to-br from-white to-amber-50/50 hover:border-amber-400 hover:shadow-lg transition-all p-5 group"
+                    >
+
+                      <div className="flex items-start gap-4">
+
+                        <div className="w-12 h-12 rounded-xl bg-[#002244] text-white border border-[#003b68] flex items-center justify-center shrink-0">
+                          <Landmark className="w-6 h-6" />
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+
+                          <div className="flex items-center justify-between gap-3">
+
+                            <h4 className="font-black text-base text-[#002244]">
+                              Government Portal
+                            </h4>
+
+                            <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-amber-600 group-hover:translate-x-1 transition-all" />
+
+                          </div>
+
+                          <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                            Restricted workspace for authorized Government of India officials.
+                          </p>
+
+                          <div className="flex items-center gap-2 mt-3 flex-wrap">
+
+                            <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-[#002244] text-white">
+                              @GOV.IN ONLY
+                            </span>
+
+                            <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              RBAC
+                            </span>
+
+                            <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-slate-50 text-slate-600 border border-slate-200">
+                              GOVERNANCE
+                            </span>
+
+                          </div>
+
+                        </div>
+
+                      </div>
+
+                    </motion.button>
+
                   </div>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                      <Lock className="w-4 h-4" />
+
+                  <div className="mt-7 p-4 rounded-xl bg-slate-50 border border-slate-200">
+
+                    <div className="flex items-start gap-2.5">
+
+                      <ShieldCheck className="w-4 h-4 text-emerald-600 mt-0.5" />
+
+                      <div>
+
+                        <div className="text-xs font-bold text-slate-800">
+                          Security Notice
+                        </div>
+
+                        <p className="text-[10px] text-slate-500 leading-relaxed mt-1">
+                          Government access is intended only for authorized officials. Access privileges are determined by the authenticated account and assigned role.
+                        </p>
+
+                      </div>
+
                     </div>
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      className="w-full pl-9 pr-10 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 font-mono font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all"
+
+                  </div>
+
+                  <div className="mt-6 flex items-center justify-center gap-4 opacity-70">
+
+                    <DigitalIndiaLogo
+                      className="h-7 w-auto"
                     />
+
+                    <MakeInIndiaLogo
+                      className="h-7 w-auto"
+                    />
+
+                    <CPSEBrandBadge
+                      className="h-7 w-auto"
+                    />
+
+                  </div>
+
+                </div>
+
+              </div>
+
+            </motion.div>
+          )}
+
+          {/* =================================================
+              LOGIN FORM
+          ================================================= */}
+
+          {portal !== 'select' && (
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 25,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+              }}
+              transition={{
+                duration: 0.45,
+              }}
+              className="grid grid-cols-1 lg:grid-cols-12 bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden"
+            >
+
+              {/* LEFT PANEL */}
+              <div
+                className={`lg:col-span-5 text-white p-7 sm:p-9 flex flex-col justify-between relative overflow-hidden ${
+                  isGovernment
+                    ? 'bg-gradient-to-br from-[#002244] via-[#001a38] to-[#001023]'
+                    : 'bg-gradient-to-br from-[#0b3766] via-[#0b4b84] to-[#092f55]'
+                }`}
+              >
+
+                <div className="absolute -top-20 -left-20 w-64 h-64 rounded-full bg-white/5 blur-3xl pointer-events-none" />
+
+                <div className="absolute -bottom-20 -right-20 w-64 h-64 rounded-full bg-amber-400/10 blur-3xl pointer-events-none" />
+
+                <div className="relative z-10">
+
+                  <button
+                    type="button"
+                    onClick={
+                      resetLogin
+                    }
+                    className="flex items-center gap-2 text-xs font-bold text-slate-300 hover:text-white transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    Change Portal
+                  </button>
+
+                  <div className="mt-8 flex items-center gap-4">
+
+                    <div className="w-14 h-14 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center">
+
+                      {isGovernment ? (
+                        <Landmark className="w-7 h-7 text-amber-300" />
+                      ) : (
+                        <Building2 className="w-7 h-7 text-blue-200" />
+                      )}
+
+                    </div>
+
+                    <div>
+
+                      <div className="text-[10px] uppercase font-black tracking-[0.16em] text-amber-300">
+                        {isGovernment
+                          ? 'Government Access'
+                          : 'User / Company Access'}
+                      </div>
+
+                      <h2 className="text-2xl font-black mt-1">
+                        {isGovernment
+                          ? 'Government Portal'
+                          : 'User Portal'}
+                      </h2>
+
+                    </div>
+
+                  </div>
+
+                  <div className="mt-8">
+
+                    <p className="text-sm text-slate-300 leading-relaxed">
+                      {isGovernment
+                        ? 'Authorized Government of India officials can access governance, standardization, review, audit, ERP migration and administrative functions.'
+                        : 'Participating companies and users can access material search, technical datasheets, procurement intelligence and company workflows.'}
+                    </p>
+
+                  </div>
+
+                  <div className="mt-7 space-y-3">
+
+                    <div className="flex items-center gap-3">
+
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+
+                      <span className="text-xs text-slate-200">
+                        {isGovernment
+                          ? 'Government role-based access'
+                          : 'Company workspace access'}
+                      </span>
+
+                    </div>
+
+                    <div className="flex items-center gap-3">
+
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+
+                      <span className="text-xs text-slate-200">
+                        Secure credential verification
+                      </span>
+
+                    </div>
+
+                    <div className="flex items-center gap-3">
+
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+
+                      <span className="text-xs text-slate-200">
+                        Audited system access
+                      </span>
+
+                    </div>
+
+                  </div>
+
+                  {isGovernment && (
+                    <div className="mt-8 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4">
+
+                      <div className="flex items-center gap-2">
+
+                        <ShieldCheck className="w-4 h-4 text-amber-300" />
+
+                        <span className="text-xs font-black text-amber-200">
+                          GOVERNMENT RESTRICTION
+                        </span>
+
+                      </div>
+
+                      <p className="text-[10px] text-slate-300 leading-relaxed mt-2">
+
+                        Only verified official Government of India email addresses ending in
+
+                        <span className="font-black text-white">
+                          {' '}@gov.in
+                        </span>
+
+                        {' '}are accepted by this portal.
+
+                      </p>
+
+                    </div>
+                  )}
+
+                </div>
+
+                <div className="relative z-10 mt-10 pt-5 border-t border-white/10">
+
+                  <div className="flex items-center gap-2 text-emerald-300">
+
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+
+                    <span className="text-[10px] font-mono font-bold">
+                      SECURE ACCESS GATEWAY
+                    </span>
+
+                  </div>
+
+                  <p className="text-[10px] text-slate-400 mt-2">
+                    Bharat Material Grid • National Material Intelligence Platform
+                  </p>
+
+                </div>
+
+              </div>
+
+              {/* RIGHT LOGIN */}
+              <div className="lg:col-span-7 p-6 sm:p-9 lg:p-11 bg-white">
+
+                <div className="max-w-xl mx-auto">
+
+                  <div className="mb-7">
+
+                    <div className="flex items-center justify-between gap-4">
+
+                      <div>
+
+                        <div
+                          className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border text-[10px] font-black uppercase tracking-wider ${
+                            isGovernment
+                              ? 'bg-amber-50 text-amber-900 border-amber-200'
+                              : 'bg-blue-50 text-blue-800 border-blue-200'
+                          }`}
+                        >
+
+                          {isGovernment ? (
+                            <Landmark className="w-3.5 h-3.5" />
+                          ) : (
+                            <UserRound className="w-3.5 h-3.5" />
+                          )}
+
+                          <span>
+                            {isGovernment
+                              ? 'Government Authentication'
+                              : 'User / Company Authentication'}
+                          </span>
+
+                        </div>
+
+                        <h3 className="text-2xl sm:text-3xl font-black text-[#002244] mt-3">
+
+                          {isGovernment
+                            ? 'Government Sign In'
+                            : 'Sign In to Bharat Material Grid'}
+
+                        </h3>
+
+                        <p className="text-xs sm:text-sm text-slate-500 mt-2 leading-relaxed">
+
+                          {isGovernment
+                            ? 'Use your official Government of India credentials to continue.'
+                            : 'Use your registered company or user credentials to continue.'}
+
+                        </p>
+
+                      </div>
+
+                      <div className="hidden sm:flex w-14 h-14 rounded-2xl bg-slate-50 border border-slate-200 items-center justify-center">
+
+                        {isGovernment ? (
+                          <AshokaEmblem
+                            size={38}
+                            color="#002244"
+                            goldTone={true}
+                          />
+                        ) : (
+                          <Building2 className="w-7 h-7 text-blue-700" />
+                        )}
+
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                  {/* ERROR */}
+                  <AnimatePresence>
+
+                    {errorMessage && (
+                      <motion.div
+                        initial={{
+                          opacity: 0,
+                          y: -8,
+                        }}
+                        animate={{
+                          opacity: 1,
+                          y: 0,
+                        }}
+                        exit={{
+                          opacity: 0,
+                          y: -8,
+                        }}
+                        className="mb-5 p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-800 flex items-start gap-3"
+                      >
+
+                        <AlertCircle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+
+                        <div className="text-xs font-semibold leading-relaxed">
+                          {errorMessage}
+                        </div>
+
+                      </motion.div>
+                    )}
+
+                  </AnimatePresence>
+
+                  {/* FORM */}
+                  <form
+                    onSubmit={
+                      handleSubmit
+                    }
+                    className="space-y-5"
+                  >
+
+                    {/* EMAIL */}
+                    <div>
+
+                      <label className="block text-xs font-black text-slate-800 mb-1.5">
+
+                        {isGovernment
+                          ? 'Official Government Email'
+                          : 'Company / User Email'}
+
+                      </label>
+
+                      <div className="relative">
+
+                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+
+                        <input
+                          type="email"
+                          required
+                          value={email}
+                          onChange={e =>
+                            setEmail(
+                              e.target.value
+                            )
+                          }
+                          placeholder={
+                            isGovernment
+                              ? 'officer@ministry.gov.in'
+                              : 'user@company.com'
+                          }
+                          autoComplete="email"
+                          className={`w-full pl-10 pr-4 py-3 rounded-xl border bg-slate-50 focus:bg-white outline-none transition-all text-sm ${
+                            isGovernment
+                              ? 'border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-100'
+                              : 'border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
+                          }`}
+                        />
+
+                      </div>
+
+                      <div className="mt-1.5 text-[10px] text-slate-400">
+
+                        {isGovernment
+                          ? 'Accepted domain: @gov.in'
+                          : 'Use the email registered with Bharat Material Grid'}
+
+                      </div>
+
+                    </div>
+
+                    {/* PASSWORD */}
+                    <div>
+
+                      <div className="flex items-center justify-between mb-1.5">
+
+                        <label className="text-xs font-black text-slate-800">
+                          Password
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            addToast({
+                              title:
+                                'Password Recovery',
+                              message:
+                                'Password recovery will use the registered account recovery flow.',
+                              type: 'info',
+                            })
+                          }
+                          className="text-[10px] font-bold text-blue-700 hover:underline"
+                        >
+                          Forgot password?
+                        </button>
+
+                      </div>
+
+                      <div className="relative">
+
+                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+
+                        <input
+                          type={
+                            showPassword
+                              ? 'text'
+                              : 'password'
+                          }
+                          required
+                          value={password}
+                          onChange={e =>
+                            setPassword(
+                              e.target.value
+                            )
+                          }
+                          placeholder="Enter your password"
+                          autoComplete="current-password"
+                          className={`w-full pl-10 pr-11 py-3 rounded-xl border bg-slate-50 focus:bg-white outline-none transition-all text-sm ${
+                            isGovernment
+                              ? 'border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-100'
+                              : 'border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
+                          }`}
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowPassword(
+                              prev =>
+                                !prev
+                            )
+                          }
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                          aria-label={
+                            showPassword
+                              ? 'Hide password'
+                              : 'Show password'
+                          }
+                        >
+
+                          {showPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+
+                        </button>
+
+                      </div>
+
+                    </div>
+
+                    {/* CAPTCHA */}
+                    <div>
+
+                      <div className="flex items-center justify-between mb-1.5">
+
+                        <label className="text-xs font-black text-slate-800">
+                          Security Verification
+                        </label>
+
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          CAPTCHA
+                        </span>
+
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+                        <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2.5">
+
+                          <div className="flex-1 text-center">
+
+                            <span className="font-mono text-lg font-black tracking-[0.25em] text-[#002244] select-none">
+                              {captchaCode}
+                            </span>
+
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={
+                              generateNewCaptcha
+                            }
+                            className="p-1.5 rounded-lg hover:bg-white text-slate-500 hover:text-[#002244]"
+                            title="Generate new code"
+                          >
+
+                            <RefreshCw
+                              className={`w-4 h-4 ${
+                                isCaptchaSpinning
+                                  ? 'animate-spin'
+                                  : ''
+                              }`}
+                            />
+
+                          </button>
+
+                        </div>
+
+                        <input
+                          type="text"
+                          required
+                          maxLength={6}
+                          value={
+                            captchaInput
+                          }
+                          onChange={e =>
+                            setCaptchaInput(
+                              e.target.value.toUpperCase()
+                            )
+                          }
+                          placeholder="Enter code"
+                          autoComplete="off"
+                          className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-mono font-bold tracking-wider focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+                        />
+
+                      </div>
+
+                    </div>
+
+                    {/* REMEMBER */}
+                    <div className="flex items-center justify-between gap-4">
+
+                      <label className="flex items-center gap-2 cursor-pointer">
+
+                        <input
+                          type="checkbox"
+                          checked={
+                            rememberMe
+                          }
+                          onChange={e =>
+                            setRememberMe(
+                              e.target.checked
+                            )
+                          }
+                          className="w-4 h-4 rounded border-slate-300 accent-[#002244]"
+                        />
+
+                        <span className="text-xs text-slate-600">
+                          Remember this session
+                        </span>
+
+                      </label>
+
+                      <div className="flex items-center gap-1.5 text-[10px] text-emerald-700 font-bold">
+
+                        <ShieldCheck className="w-3.5 h-3.5" />
+
+                        Secure Session
+
+                      </div>
+
+                    </div>
+
+                    {/* SUBMIT */}
+                    <div className="pt-1">
+
+                      <AnimatedButton
+                        type="submit"
+                        variant="primary"
+                        size="lg"
+                        isLoading={
+                          isLoading
+                        }
+                        loadingText={
+                          isGovernment
+                            ? 'Verifying Government Credentials...'
+                            : 'Verifying Account...'
+                        }
+                        isSuccess={
+                          isSuccess
+                        }
+                        successText={
+                          isGovernment
+                            ? 'Government Access Granted'
+                            : 'Access Granted'
+                        }
+                        className={`w-full py-3.5 text-sm font-black border shadow-sm ${
+                          isGovernment
+                            ? 'bg-gradient-to-r from-[#002244] to-[#003d6b] hover:from-[#00305a] hover:to-[#00518a] border-[#00345e]'
+                            : 'bg-gradient-to-r from-[#0756a0] to-[#0a6bc3] hover:from-[#064986] hover:to-[#095ba7] border-blue-600'
+                        } text-white`}
+                        icon={
+                          <ArrowRight className="w-4 h-4" />
+                        }
+                        iconPosition="right"
+                      >
+
+                        {isGovernment
+                          ? 'Sign In to Government Portal'
+                          : 'Sign In to User Portal'}
+
+                      </AnimatedButton>
+
+                    </div>
+
+                  </form>
+
+                  {/* BACK */}
+                  <div className="mt-6">
+
                     <button
                       type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                      onClick={
+                        resetLogin
+                      }
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-xs font-bold text-slate-600 transition-all"
                     >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+
+                      <ChevronLeft className="w-3.5 h-3.5" />
+
+                      Back to Portal Selection
+
                     </button>
+
                   </div>
-                </div>
 
-                {/* AUTHENTIC GOVERNMENT CAPTCHA BOX WITH ANIMATED SPIN */}
-                <div className="space-y-1.5 pt-1">
-                  <label className="text-xs font-bold text-slate-800 flex items-center justify-between">
-                    <span>Security Captcha</span>
-                    <span className="text-[10px] text-slate-500 font-mono">Case Sensitive</span>
-                  </label>
+                  {/* SECURITY */}
+                  <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
 
-                  <div className="flex items-center gap-3">
-                    {/* Visual Captcha Canvas Badge */}
-                    <div className="flex-1 bg-gradient-to-r from-amber-100/80 via-emerald-100/60 to-blue-100/80 border border-slate-300 rounded-xl py-2 px-4 flex items-center justify-between select-none shadow-inner">
-                      <span className="font-mono text-base sm:text-lg font-black tracking-widest text-[#002244] italic line-through decoration-amber-600 select-none">
-                        {captchaCode}
-                      </span>
-                      <motion.button
-                        whileHover={{ scale: 1.15 }}
-                        whileTap={{ scale: 0.85 }}
-                        type="button"
-                        onClick={generateNewCaptcha}
-                        className="p-1 text-slate-600 hover:text-[#002244] transition-colors rounded cursor-pointer"
-                        title="Generate fresh captcha code"
-                      >
-                        <RefreshCw className={`w-4 h-4 ${isCaptchaSpinning ? 'animate-spin' : ''}`} />
-                      </motion.button>
+                    <div className="flex items-start gap-2.5">
+
+                      <KeyRound className="w-4 h-4 text-slate-500 mt-0.5 shrink-0" />
+
+                      <div>
+
+                        <div className="text-[11px] font-black text-slate-800">
+                          Account Security
+                        </div>
+
+                        <p className="text-[10px] text-slate-500 leading-relaxed mt-1">
+                          Never share your password or verification code. Access permissions are determined by the authenticated account.
+                        </p>
+
+                      </div>
+
                     </div>
 
-                    {/* Captcha Input */}
-                    <input
-                      type="text"
-                      required={loginTab !== 'demo'}
-                      value={captchaInput}
-                      onChange={e => setCaptchaInput(e.target.value.toUpperCase())}
-                      placeholder="Enter Captcha"
-                      maxLength={6}
-                      className="w-36 py-2.5 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm font-mono font-bold tracking-wider text-slate-900 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
-                    />
                   </div>
+
+                  {/* FOOTER ROW */}
+                  <div className="mt-7 pt-5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
+
+                    <div className="flex items-center gap-1.5">
+
+                      <Globe2 className="w-3.5 h-3.5" />
+
+                      <span>
+                        India National Portal
+                      </span>
+
+                    </div>
+
+                    <span>
+                      BHARAT MATERIAL GRID
+                    </span>
+
+                  </div>
+
                 </div>
 
-                {/* Remember Me Checkbox */}
-                <div className="flex items-center justify-between pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={e => setRememberMe(e.target.checked)}
-                      className="w-4 h-4 text-[#002244] border-slate-300 rounded focus:ring-amber-500 cursor-pointer"
-                    />
-                    <span className="text-xs text-slate-700 font-medium">Remember my CPSE session</span>
-                  </label>
-                  <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                    2FA Verified
-                  </span>
-                </div>
-
-                {/* SIGN IN SUBMIT BUTTON WITH FLUID MOTION HOVER */}
-                <div className="pt-2">
-                  <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                    <AnimatedButton
-                      type="submit"
-                      variant="primary"
-                      size="lg"
-                      isLoading={isLoading}
-                      loadingText="Verifying Sovereign Credentials..."
-                      isSuccess={isSuccess}
-                      successText="Access Granted • Loading Command Center..."
-                      className="w-full text-xs sm:text-sm font-black py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 border border-amber-400 shadow-md cursor-pointer"
-                      icon={<ArrowRight className="w-4 h-4" />}
-                      iconPosition="right"
-                    >
-                      Sign In to Officer Portal
-                    </AnimatedButton>
-                  </motion.div>
-                </div>
-              </form>
-
-              {/* Help & Toll-Free Phone */}
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs text-slate-600">
-                <span className="flex items-center gap-1.5 font-medium">
-                  <Phone className="w-3.5 h-3.5 text-slate-500" />
-                  Nodal Helpline: 1800-11-2026
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    addToast({
-                      title: 'CPSE Support Ticket Dispatched',
-                      message: 'NIC Helpline executive will connect within 15 minutes.',
-                      type: 'info'
-                    })
-                  }
-                  className="font-bold text-blue-900 hover:underline cursor-pointer"
-                >
-                  Contact Desk
-                </button>
               </div>
-            </div>
 
-            {/* LEGAL NOTICE FOOTER */}
-            <div className="mt-6 pt-4 border-t border-slate-100 text-[10px] text-slate-500 text-center space-y-1">
-              <p>
-                Unauthorized access is strictly prohibited under Information Technology Act 2000. All logins and queries are cryptographically logged.
-              </p>
-              <div className="flex items-center justify-center gap-3 pt-1">
-                <button
-                  onClick={() => addToast({ title: 'Privacy Policy', message: 'DPDP Act 2023 protected.', type: 'info' })}
-                  className="hover:text-slate-800 cursor-pointer"
-                >
-                  Privacy Policy
-                </button>
-                <span>•</span>
-                <button
-                  onClick={() => addToast({ title: 'Terms of Service', message: 'CPSE Data Sharing Framework applied.', type: 'info' })}
-                  className="hover:text-slate-800 cursor-pointer"
-                >
-                  Terms of Use
-                </button>
-                <span>•</span>
-                <button
-                  onClick={() => addToast({ title: 'Help Manual', message: 'BMG User Manual v3.4 available.', type: 'info' })}
-                  className="hover:text-slate-800 cursor-pointer"
-                >
-                  Help Manual
-                </button>
-              </div>
-            </div>
-          </div>
-        </motion.div>
+            </motion.div>
+          )}
+
+        </div>
       </main>
 
-      {/* 4. GOVERNMENT FOOTER STRIP */}
-      <footer className="bg-[#001730] text-slate-400 py-3 px-4 text-center text-xs border-t border-slate-800 font-mono z-10">
-        NIC Sovereign Cloud Hosting • Ministry of Heavy Industries • Government of India
+      {/* FOOTER */}
+      <footer className="bg-[#001730] text-slate-400 border-t border-slate-800 px-4 py-3 text-center text-[10px] sm:text-xs">
+        Bharat Material Grid • Secure Digital Access Gateway • Government of India
       </footer>
+
     </div>
   );
 };
