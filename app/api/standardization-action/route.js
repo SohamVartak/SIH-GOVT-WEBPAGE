@@ -10,17 +10,241 @@ export const runtime = "nodejs";
 function safeText(value) {
   if (
     value === null ||
-    value === undefined ||
-    value === ""
+    value === undefined
   ) {
     return "";
   }
 
-  return String(value).trim();
+  return String(value);
 }
 
 function normalizeAction(value) {
-  return safeText(value).toUpperCase();
+  return safeText(value)
+    .trim()
+    .toUpperCase();
+}
+
+/* ============================================================
+   SAVE ML FEEDBACK
+============================================================ */
+
+async function saveMatchFeedback(
+  supabase,
+  {
+    requestId,
+    ncsId,
+    mappings,
+    action,
+    reviewer,
+    comments,
+  }
+) {
+  /*
+   * Only final government decisions
+   * become training labels.
+   *
+   * APPROVE  = 1
+   * REJECT   = 0
+   * NEEDS_MORE_DATA = no label
+   */
+  if (
+    action !== "APPROVE" &&
+    action !== "REJECT"
+  ) {
+    return {
+      saved: 0,
+      skipped: true,
+    };
+  }
+
+  if (
+    !Array.isArray(mappings) ||
+    mappings.length < 2
+  ) {
+    return {
+      saved: 0,
+      skipped: true,
+    };
+  }
+
+  /*
+   * The source mapping is created by
+   * match-materials with this exact
+   * generic reason.
+   *
+   * Candidate mappings contain the
+   * Gemini-generated reason.
+   */
+  const sourceMapping =
+    mappings.find(
+      (mapping) =>
+        safeText(
+          mapping.ai_reason
+        ).trim() ===
+        "AI proposed a common national material identity."
+    ) || mappings[0];
+
+  const sourceMaterialId =
+    Number(
+      sourceMapping.material_id
+    );
+
+  if (
+    !Number.isInteger(
+      sourceMaterialId
+    )
+  ) {
+    return {
+      saved: 0,
+      skipped: true,
+    };
+  }
+
+  const candidateMappings =
+    mappings.filter(
+      (mapping) =>
+        Number(
+          mapping.material_id
+        ) !==
+        sourceMaterialId
+    );
+
+  if (
+    candidateMappings.length ===
+    0
+  ) {
+    return {
+      saved: 0,
+      skipped: true,
+    };
+  }
+
+  const label =
+    action === "APPROVE"
+      ? 1
+      : 0;
+
+  /*
+   * Check existing feedback for
+   * this exact review request so
+   * repeated button clicks don't
+   * create duplicate training rows.
+   */
+  const {
+    data: existingRows,
+    error: existingError,
+  } = await supabase
+    .from(
+      "material_match_feedback"
+    )
+    .select(
+      "source_material_id, candidate_material_id"
+    )
+    .eq(
+      "request_id",
+      requestId
+    )
+    .eq(
+      "label",
+      label
+    );
+
+  if (existingError) {
+    throw new Error(
+      `Failed to check existing ML feedback: ${existingError.message}`
+    );
+  }
+
+  const existingKeys =
+    new Set(
+      (existingRows || []).map(
+        (row) =>
+          `${row.source_material_id}:${row.candidate_material_id}`
+      )
+    );
+
+  const rows = [];
+
+  for (
+    const mapping of candidateMappings
+  ) {
+    const candidateMaterialId =
+      Number(
+        mapping.material_id
+      );
+
+    if (
+      !Number.isInteger(
+        candidateMaterialId
+      )
+    ) {
+      continue;
+    }
+
+    const key =
+      `${sourceMaterialId}:${candidateMaterialId}`;
+
+    if (
+      existingKeys.has(key)
+    ) {
+      continue;
+    }
+
+    rows.push({
+      source_material_id:
+        sourceMaterialId,
+
+      candidate_material_id:
+        candidateMaterialId,
+
+      ncs_id:
+        ncsId,
+
+      request_id:
+        requestId,
+
+      label,
+
+      classification:
+        null,
+
+      ai_confidence:
+        mapping.ai_confidence ??
+        null,
+
+      reviewer:
+        reviewer || null,
+
+      reviewer_comments:
+        comments || null,
+    });
+  }
+
+  if (!rows.length) {
+    return {
+      saved: 0,
+      skipped: true,
+    };
+  }
+
+  const {
+    error: feedbackError,
+  } = await supabase
+    .from(
+      "material_match_feedback"
+    )
+    .insert(rows);
+
+  if (feedbackError) {
+    throw new Error(
+      `Failed to save ML feedback: ${feedbackError.message}`
+    );
+  }
+
+  return {
+    saved: rows.length,
+    skipped: false,
+  };
 }
 
 /* ============================================================
@@ -34,10 +258,12 @@ export async function POST(request) {
     -------------------------------------------------------- */
 
     const supabaseUrl =
-      process.env.NEXT_PUBLIC_SUPABASE_URL;
+      process.env
+        .NEXT_PUBLIC_SUPABASE_URL;
 
     const serviceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY;
+      process.env
+        .SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl) {
       return NextResponse.json(
@@ -46,7 +272,9 @@ export async function POST(request) {
           error:
             "NEXT_PUBLIC_SUPABASE_URL is missing.",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
@@ -57,71 +285,101 @@ export async function POST(request) {
           error:
             "SUPABASE_SERVICE_ROLE_KEY is missing.",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    const supabase = createClient(
-      supabaseUrl,
-      serviceRoleKey
-    );
+    const supabase =
+      createClient(
+        supabaseUrl,
+        serviceRoleKey
+      );
 
     /* --------------------------------------------------------
-       REQUEST BODY
+       BODY
     -------------------------------------------------------- */
 
-    const body = await request.json();
+    const body =
+      await request
+        .json()
+        .catch(() => ({}));
 
-    const requestId = body.requestId;
-    const action = normalizeAction(body.action);
+    const requestId =
+      Number(
+        body.requestId
+      );
+
+    const action =
+      normalizeAction(
+        body.action
+      );
+
     const reviewer =
-      safeText(body.reviewer) ||
-      "Material Master Officer";
+      safeText(
+        body.reviewer ||
+          "Material Master Officer"
+      ).trim();
 
     const comments =
-      safeText(body.comments);
+      safeText(
+        body.comments
+      ).trim();
 
     if (
-      requestId === null ||
-      requestId === undefined ||
-      requestId === ""
+      !Number.isInteger(
+        requestId
+      ) ||
+      requestId <= 0
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "requestId is required.",
+            "A valid requestId is required.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const allowedActions = new Set([
-      "APPROVE",
-      "REJECT",
-      "NEEDS_MORE_DATA",
-    ]);
+    const allowedActions =
+      new Set([
+        "APPROVE",
+        "REJECT",
+        "NEEDS_MORE_DATA",
+      ]);
 
-    if (!allowedActions.has(action)) {
+    if (
+      !allowedActions.has(
+        action
+      )
+    ) {
       return NextResponse.json(
         {
           success: false,
           error:
             "Invalid action. Use APPROVE, REJECT, or NEEDS_MORE_DATA.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
     /* --------------------------------------------------------
-       1. LOAD REQUEST
+       LOAD STANDARDIZATION REQUEST
     -------------------------------------------------------- */
 
     const {
       data: standardizationRequest,
       error: requestError,
     } = await supabase
-      .from("standardization_requests")
+      .from(
+        "standardization_requests"
+      )
       .select(
         [
           "request_id",
@@ -146,535 +404,674 @@ export async function POST(request) {
       return NextResponse.json(
         {
           success: false,
+
           error:
-            "Standardization request was not found.",
+            "Standardization request not found.",
+
           details:
             requestError?.message ||
             null,
         },
-        { status: 404 }
+        {
+          status: 404,
+        }
       );
     }
 
+    const ncsId =
+      standardizationRequest.ncs_id;
+
     /* --------------------------------------------------------
-       2. LOAD NCS
+       LOAD NCS
+    -------------------------------------------------------- */
+
+    let ncs = null;
+
+    if (
+      ncsId !== null &&
+      ncsId !== undefined
+    ) {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from(
+          "ncs_materials"
+        )
+        .select(
+          [
+            "ncs_id",
+            "ncs_code",
+            "ncs_name",
+            "category",
+            "status",
+          ].join(",")
+        )
+        .eq(
+          "ncs_id",
+          ncsId
+        )
+        .single();
+
+      if (
+        error ||
+        !data
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+
+            error:
+              "Associated NCS record not found.",
+
+            details:
+              error?.message ||
+              null,
+          },
+          {
+            status: 404,
+          }
+        );
+      }
+
+      ncs = data;
+    }
+
+    /* --------------------------------------------------------
+       LOAD NCS MAPPINGS
+    -------------------------------------------------------- */
+
+    let mappings = [];
+
+    if (
+      ncsId !== null &&
+      ncsId !== undefined
+    ) {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from(
+          "material_ncs_mapping"
+        )
+        .select(
+          [
+            "material_id",
+            "ncs_id",
+            "ai_confidence",
+            "ai_reason",
+            "match_status",
+            "verified",
+          ].join(",")
+        )
+        .eq(
+          "ncs_id",
+          ncsId
+        )
+        .order(
+          "material_id",
+          {
+            ascending: true,
+          }
+        );
+
+      if (error) {
+        return NextResponse.json(
+          {
+            success: false,
+
+            error:
+              "Failed to load NCS mappings.",
+
+            details:
+              error.message,
+          },
+          {
+            status: 500,
+          }
+        );
+      }
+
+      mappings =
+        data || [];
+    }
+
+    /* --------------------------------------------------------
+       MATERIAL IDS
+    -------------------------------------------------------- */
+
+    const materialIds =
+      mappings
+        .map(
+          (mapping) =>
+            Number(
+              mapping.material_id
+            )
+        )
+        .filter(
+          (id) =>
+            Number.isInteger(id)
+        );
+
+    let materials = [];
+
+    if (
+      materialIds.length
+    ) {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("materials")
+        .select(
+          [
+            "id",
+            "company",
+            "material_number",
+            "description",
+            "specifications",
+            "category",
+          ].join(",")
+        )
+        .in(
+          "id",
+          materialIds
+        );
+
+      if (error) {
+        return NextResponse.json(
+          {
+            success: false,
+
+            error:
+              "Failed to load mapped materials.",
+
+            details:
+              error.message,
+          },
+          {
+            status: 500,
+          }
+        );
+      }
+
+      materials =
+        data || [];
+    }
+
+    const materialById =
+      new Map(
+        materials.map(
+          (material) => [
+            Number(
+              material.id
+            ),
+            material,
+          ]
+        )
+      );
+
+    const previousRequestStatus =
+      standardizationRequest.status;
+
+    const previousNcsStatus =
+      ncs?.status ||
+      null;
+
+    /* --------------------------------------------------------
+       DETERMINE NEW STATES
+    -------------------------------------------------------- */
+
+    let newRequestStatus;
+    let newNcsStatus =
+      previousNcsStatus;
+
+    if (
+      action === "APPROVE"
+    ) {
+      newRequestStatus =
+        "APPROVED";
+
+      newNcsStatus =
+        "APPROVED";
+    } else if (
+      action === "REJECT"
+    ) {
+      newRequestStatus =
+        "REJECTED";
+
+      newNcsStatus =
+        "REJECTED";
+    } else {
+      newRequestStatus =
+        "NEEDS_MORE_DATA";
+
+      if (
+        !newNcsStatus
+      ) {
+        newNcsStatus =
+          "PROPOSED";
+      }
+    }
+
+    /* --------------------------------------------------------
+       UPDATE NCS
+    -------------------------------------------------------- */
+
+    if (
+      ncsId !== null &&
+      ncsId !== undefined &&
+      newNcsStatus !==
+        previousNcsStatus
+    ) {
+      const {
+        error,
+      } = await supabase
+        .from(
+          "ncs_materials"
+        )
+        .update({
+          status:
+            newNcsStatus,
+        })
+        .eq(
+          "ncs_id",
+          ncsId
+        );
+
+      if (error) {
+        throw new Error(
+          `Failed to update NCS status: ${error.message}`
+        );
+      }
+    }
+
+    /* --------------------------------------------------------
+       UPDATE MAPPINGS
+    -------------------------------------------------------- */
+
+    let newMappingStatus;
+
+    if (
+      action === "APPROVE"
+    ) {
+      newMappingStatus =
+        "VERIFIED";
+    } else if (
+      action === "REJECT"
+    ) {
+      newMappingStatus =
+        "REJECTED";
+    } else {
+      newMappingStatus =
+        "NEEDS_MORE_DATA";
+    }
+
+    if (
+      ncsId !== null &&
+      ncsId !== undefined &&
+      materialIds.length
+    ) {
+      const mappingUpdate =
+        {
+          match_status:
+            newMappingStatus,
+
+          verified:
+            action ===
+            "APPROVE",
+        };
+
+      const {
+        error,
+      } = await supabase
+        .from(
+          "material_ncs_mapping"
+        )
+        .update(
+          mappingUpdate
+        )
+        .eq(
+          "ncs_id",
+          ncsId
+        );
+
+      if (error) {
+        throw new Error(
+          `Failed to update NCS mappings: ${error.message}`
+        );
+      }
+    }
+
+    /* --------------------------------------------------------
+       UPDATE GOVERNMENT REQUEST
     -------------------------------------------------------- */
 
     const {
-      data: ncs,
-      error: ncsError,
+      data:
+        updatedRequest,
+      error:
+        updateRequestError,
     } = await supabase
-      .from("ncs_materials")
-      .select(
-        "ncs_id, ncs_code, ncs_name, category, status"
+      .from(
+        "standardization_requests"
       )
+      .update({
+        status:
+          newRequestStatus,
+
+        reviewed_by:
+          reviewer || null,
+
+        review_date:
+          new Date().toISOString(),
+
+        government_comments:
+          comments || null,
+      })
       .eq(
-        "ncs_id",
-        standardizationRequest.ncs_id
+        "request_id",
+        requestId
+      )
+      .select(
+        [
+          "request_id",
+          "ncs_id",
+          "status",
+          "reviewed_by",
+          "review_date",
+          "government_comments",
+        ].join(",")
       )
       .single();
 
     if (
-      ncsError ||
-      !ncs
+      updateRequestError ||
+      !updatedRequest
     ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Associated national material record was not found.",
-          details:
-            ncsError?.message ||
-            null,
-        },
-        { status: 404 }
+      throw new Error(
+        `Failed to update standardization request: ${
+          updateRequestError?.message ||
+          "unknown error"
+        }`
       );
     }
 
     /* --------------------------------------------------------
-       3. LOAD MAPPINGS
+       SAVE ML TRAINING FEEDBACK
     -------------------------------------------------------- */
 
-    const {
-      data: mappings,
-      error: mappingsError,
-    } = await supabase
-      .from("material_ncs_mapping")
-      .select(
-        [
-          "material_id",
-          "ncs_id",
-          "ai_confidence",
-          "ai_reason",
-          "match_status",
-          "verified",
-        ].join(",")
-      )
-      .eq(
-        "ncs_id",
-        ncs.ncs_id
-      );
-
-    if (mappingsError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Failed to load national material mappings.",
-          details:
-            mappingsError.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    const mappingRows =
-      mappings || [];
-
-    const reviewDate =
-      new Date().toISOString();
-
-    /* ========================================================
-       ACTION: APPROVE
-    ======================================================== */
-
-    if (action === "APPROVE") {
-      /* ------------------------------------------------------
-         A. APPROVE THE NATIONAL MATERIAL
-      ------------------------------------------------------ */
-
-      const {
-        error: ncsUpdateError,
-      } = await supabase
-        .from("ncs_materials")
-        .update({
-          status:
-            "APPROVED",
-        })
-        .eq(
-          "ncs_id",
-          ncs.ncs_id
-        );
-
-      if (ncsUpdateError) {
-        throw new Error(
-          `Failed to approve national material: ${ncsUpdateError.message}`
-        );
-      }
-
-      /* ------------------------------------------------------
-         B. VERIFY ALL MAPPINGS
-      ------------------------------------------------------ */
-
-      const {
-        error: mappingUpdateError,
-      } = await supabase
-        .from(
-          "material_ncs_mapping"
-        )
-        .update({
-          verified:
-            true,
-
-          match_status:
-            "VERIFIED",
-        })
-        .eq(
-          "ncs_id",
-          ncs.ncs_id
-        );
-
-      if (mappingUpdateError) {
-        throw new Error(
-          `Failed to verify material mappings: ${mappingUpdateError.message}`
-        );
-      }
-
-      /* ------------------------------------------------------
-         C. APPROVE GOVERNMENT REQUEST
-      ------------------------------------------------------ */
-
-      const {
-        data: updatedRequest,
-        error:
-          requestUpdateError,
-      } = await supabase
-        .from(
-          "standardization_requests"
-        )
-        .update({
-          status:
-            "APPROVED",
-
-          reviewed_by:
-            reviewer,
-
-          review_date:
-            reviewDate,
-
-          government_comments:
-            comments ||
-            "National material identity approved by authorized reviewer.",
-        })
-        .eq(
-          "request_id",
-          requestId
-        )
-        .select()
-        .single();
-
-      if (requestUpdateError) {
-        throw new Error(
-          `Failed to approve standardization request: ${requestUpdateError.message}`
-        );
-      }
-
-      /* ------------------------------------------------------
-         D. AUDIT ENTRY
-      ------------------------------------------------------ */
-
-      await createAuditEntry(
+    const feedback =
+      await saveMatchFeedback(
         supabase,
         {
           requestId,
-          ncs,
-          action:
-            "NATIONAL_MATERIAL_APPROVED",
+          ncsId,
+          mappings,
+          action,
           reviewer,
-          comments:
-            comments ||
-            "National material identity approved by authorized reviewer.",
-          previousValue:
-            standardizationRequest.status ||
-            "PENDING_REVIEW",
-          newValue:
-            "APPROVED",
+          comments,
         }
       );
 
-      return NextResponse.json({
-        success: true,
+    /* --------------------------------------------------------
+       AUDIT METADATA
+    -------------------------------------------------------- */
 
-        action:
-          "APPROVE",
+    const auditMaterials =
+      mappings.map(
+        (mapping) => {
+          const material =
+            materialById.get(
+              Number(
+                mapping.material_id
+              )
+            );
 
-        message:
-          "National material identity approved successfully.",
+          return {
+            material_id:
+              Number(
+                mapping.material_id
+              ),
 
-        data: {
-          request:
-            updatedRequest,
+            company:
+              material?.company ||
+              null,
 
-          ncs: {
-            ncs_id:
-              ncs.ncs_id,
+            material_number:
+              material?.material_number ||
+              null,
 
-            ncs_code:
-              ncs.ncs_code,
+            description:
+              material?.description ||
+              null,
 
-            ncs_name:
-              ncs.ncs_name,
+            previous_match_status:
+              mapping.match_status ||
+              null,
 
-            status:
-              "APPROVED",
-          },
+            new_match_status:
+              newMappingStatus,
 
-          mappings_updated:
-            mappingRows.length,
-        },
-      });
-    }
+            previous_verified:
+              mapping.verified ===
+              true,
 
-    /* ========================================================
-       ACTION: REJECT
-    ======================================================== */
+            new_verified:
+              action ===
+              "APPROVE",
 
-    if (action === "REJECT") {
-      /* ------------------------------------------------------
-         A. REJECT NCS
-      ------------------------------------------------------ */
-
-      const {
-        error: ncsUpdateError,
-      } = await supabase
-        .from("ncs_materials")
-        .update({
-          status:
-            "REJECTED",
-        })
-        .eq(
-          "ncs_id",
-          ncs.ncs_id
-        );
-
-      if (ncsUpdateError) {
-        throw new Error(
-          `Failed to reject national material: ${ncsUpdateError.message}`
-        );
-      }
-
-      /* ------------------------------------------------------
-         B. PRESERVE MATERIALS BUT MARK MAPPING REJECTED
-      ------------------------------------------------------ */
-
-      const {
-        error: mappingUpdateError,
-      } = await supabase
-        .from(
-          "material_ncs_mapping"
-        )
-        .update({
-          match_status:
-            "REJECTED",
-
-          verified:
-            false,
-        })
-        .eq(
-          "ncs_id",
-          ncs.ncs_id
-        );
-
-      if (mappingUpdateError) {
-        throw new Error(
-          `Failed to reject material mappings: ${mappingUpdateError.message}`
-        );
-      }
-
-      /* ------------------------------------------------------
-         C. REJECT REQUEST
-      ------------------------------------------------------ */
-
-      const {
-        data: updatedRequest,
-        error:
-          requestUpdateError,
-      } = await supabase
-        .from(
-          "standardization_requests"
-        )
-        .update({
-          status:
-            "REJECTED",
-
-          reviewed_by:
-            reviewer,
-
-          review_date:
-            reviewDate,
-
-          government_comments:
-            comments ||
-            "National material mapping rejected. Existing CPSE material identities remain separate.",
-        })
-        .eq(
-          "request_id",
-          requestId
-        )
-        .select()
-        .single();
-
-      if (requestUpdateError) {
-        throw new Error(
-          `Failed to reject standardization request: ${requestUpdateError.message}`
-        );
-      }
-
-      /* ------------------------------------------------------
-         D. AUDIT
-      ------------------------------------------------------ */
-
-      await createAuditEntry(
-        supabase,
-        {
-          requestId,
-          ncs,
-          action:
-            "NATIONAL_MATERIAL_REJECTED",
-          reviewer,
-          comments:
-            comments ||
-            "National material mapping rejected. Existing CPSE material identities remain separate.",
-          previousValue:
-            standardizationRequest.status ||
-            "PENDING_REVIEW",
-          newValue:
-            "REJECTED",
+            ai_confidence:
+              mapping.ai_confidence ??
+              null,
+          };
         }
       );
 
-      return NextResponse.json({
-        success: true,
+    /* --------------------------------------------------------
+       SAVE AUDIT LOG
+    -------------------------------------------------------- */
 
-        action:
-          "REJECT",
+    const auditRow = {
+      material_id:
+        auditMaterials.length ===
+        1
+          ? auditMaterials[0]
+              .material_id
+          : null,
 
-        message:
-          "National material proposal rejected. Existing CPSE materials were preserved.",
+      ncs_id:
+        ncsId !== null &&
+        ncsId !== undefined
+          ? ncsId
+          : null,
 
-        data: {
-          request:
-            updatedRequest,
+      request_id:
+        requestId,
 
-          ncs: {
-            ncs_id:
-              ncs.ncs_id,
+      action,
 
-            ncs_code:
-              ncs.ncs_code,
+      previous_status:
+        previousRequestStatus,
 
-            ncs_name:
-              ncs.ncs_name,
+      new_status:
+        newRequestStatus,
 
-            status:
-              "REJECTED",
-          },
+      performed_by:
+        reviewer || null,
 
-          mappings_updated:
-            mappingRows.length,
-        },
-      });
-    }
+      comments:
+        comments || null,
 
-    /* ========================================================
-       ACTION: NEEDS MORE DATA
-    ======================================================== */
+      metadata: {
+        entity:
+          "standardization_request",
 
-    if (
-      action ===
-      "NEEDS_MORE_DATA"
-    ) {
-      /* ------------------------------------------------------
-         A. MARK REQUEST
-      ------------------------------------------------------ */
+        ncs_code:
+          ncs?.ncs_code ||
+          null,
 
-      const {
-        data: updatedRequest,
-        error:
-          requestUpdateError,
-      } = await supabase
-        .from(
-          "standardization_requests"
-        )
-        .update({
-          status:
-            "NEEDS_MORE_DATA",
+        ncs_name:
+          ncs?.ncs_name ||
+          null,
 
-          reviewed_by:
-            reviewer,
+        previous_ncs_status:
+          previousNcsStatus,
 
-          review_date:
-            reviewDate,
+        new_ncs_status:
+          newNcsStatus,
 
-          government_comments:
-            comments ||
-            "Additional technical documentation required before national material approval.",
-        })
-        .eq(
-          "request_id",
-          requestId
-        )
-        .select()
-        .single();
+        mapping_status:
+          newMappingStatus,
 
-      if (requestUpdateError) {
-        throw new Error(
-          `Failed to request more data: ${requestUpdateError.message}`
-        );
-      }
+        mapping_count:
+          auditMaterials.length,
 
-      /* ------------------------------------------------------
-         B. MARK MAPPINGS AS NEEDING DATA
-      ------------------------------------------------------ */
+        ml_feedback_rows_saved:
+          feedback.saved,
 
-      const {
-        error: mappingUpdateError,
-      } = await supabase
-        .from(
-          "material_ncs_mapping"
-        )
-        .update({
-          match_status:
-            "NEEDS_MORE_DATA",
+        ml_feedback_label:
+          action ===
+          "APPROVE"
+            ? 1
+            : action ===
+              "REJECT"
+              ? 0
+              : null,
 
-          verified:
-            false,
-        })
-        .eq(
-          "ncs_id",
-          ncs.ncs_id
-        );
+        materials:
+          auditMaterials,
 
-      if (mappingUpdateError) {
-        throw new Error(
-          `Failed to update mappings for additional data: ${mappingUpdateError.message}`
-        );
-      }
-
-      /* ------------------------------------------------------
-         C. AUDIT
-      ------------------------------------------------------ */
-
-      await createAuditEntry(
-        supabase,
-        {
-          requestId,
-          ncs,
-          action:
-            "MORE_DATA_REQUESTED",
-          reviewer,
-          comments:
-            comments ||
-            "Additional technical documentation required before national material approval.",
-          previousValue:
-            standardizationRequest.status ||
-            "PENDING_REVIEW",
-          newValue:
-            "NEEDS_MORE_DATA",
-        }
-      );
-
-      return NextResponse.json({
-        success: true,
-
-        action:
-          "NEEDS_MORE_DATA",
-
-        message:
-          "Additional technical data has been requested.",
-
-        data: {
-          request:
-            updatedRequest,
-
-          ncs: {
-            ncs_id:
-              ncs.ncs_id,
-
-            ncs_code:
-              ncs.ncs_code,
-
-            ncs_name:
-              ncs.ncs_name,
-
-            status:
-              ncs.status,
-          },
-
-          mappings_updated:
-            mappingRows.length,
-        },
-      });
-    }
-
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "Unsupported action.",
+        action_timestamp:
+          new Date().toISOString(),
       },
-      { status: 400 }
-    );
+    };
+
+    const {
+      error:
+        auditError,
+    } = await supabase
+      .from(
+        "material_audit_log"
+      )
+      .insert(
+        auditRow
+      );
+
+    /* --------------------------------------------------------
+       AUDIT ERROR
+    -------------------------------------------------------- */
+
+    if (auditError) {
+      console.error(
+        "Audit log insert failed:",
+        auditError
+      );
+
+      return NextResponse.json({
+        success: true,
+
+        audit_saved: false,
+
+        ml_feedback_saved:
+          feedback.saved,
+
+        warning:
+          `Review action was completed, but the audit log could not be saved: ${auditError.message}`,
+
+        data: {
+          request_id:
+            requestId,
+
+          action,
+
+          request_status:
+            newRequestStatus,
+
+          ncs_id:
+            ncsId,
+
+          ncs_status:
+            newNcsStatus,
+
+          mapping_status:
+            newMappingStatus,
+
+          reviewer,
+
+          ml_feedback_rows_saved:
+            feedback.saved,
+        },
+      });
+    }
+
+    /* --------------------------------------------------------
+       SUCCESS
+    -------------------------------------------------------- */
+
+    return NextResponse.json({
+      success: true,
+
+      audit_saved: true,
+
+      ml_feedback_saved:
+        feedback.saved,
+
+      message:
+        `Government review action ${action} completed successfully.`,
+
+      data: {
+        request_id:
+          requestId,
+
+        action,
+
+        request_status:
+          newRequestStatus,
+
+        previous_request_status:
+          previousRequestStatus,
+
+        ncs_id:
+          ncsId,
+
+        ncs_code:
+          ncs?.ncs_code ||
+          null,
+
+        ncs_status:
+          newNcsStatus,
+
+        previous_ncs_status:
+          previousNcsStatus,
+
+        mapping_status:
+          newMappingStatus,
+
+        mappings_affected:
+          mappings.length,
+
+        ml_feedback_rows_saved:
+          feedback.saved,
+
+        ml_training_label:
+          action ===
+          "APPROVE"
+            ? 1
+            : action ===
+              "REJECT"
+              ? 0
+              : null,
+
+        reviewer,
+
+        review_date:
+          updatedRequest.review_date,
+
+        comments:
+          updatedRequest.government_comments,
+      },
+    });
   } catch (error) {
     console.error(
       "Standardization action error:",
@@ -684,79 +1081,17 @@ export async function POST(request) {
     return NextResponse.json(
       {
         success: false,
+
         error:
+          "Failed to complete government review action.",
+
+        details:
           error?.message ||
           String(error),
       },
-      { status: 500 }
-    );
-  }
-}
-
-/* ============================================================
-   AUDIT ENTRY
-============================================================ */
-
-async function createAuditEntry(
-  supabase,
-  {
-    requestId,
-    ncs,
-    action,
-    reviewer,
-    comments,
-    previousValue,
-    newValue,
-  }
-) {
-  /*
-   * First try a structured audit table.
-   *
-   * If that table does not exist in the current
-   * prototype schema, we do not block the main
-   * approval/rejection operation.
-   */
-
-  const auditPayload = {
-    request_id:
-      requestId,
-
-    ncs_id:
-      ncs.ncs_id,
-
-    action,
-
-    performed_by:
-      reviewer,
-
-    previous_value:
-      previousValue,
-
-    new_value:
-      newValue,
-
-    comments:
-      comments ||
-      null,
-
-    created_at:
-      new Date().toISOString(),
-  };
-
-  const {
-    error,
-  } = await supabase
-    .from(
-      "material_audit_log"
-    )
-    .insert(
-      auditPayload
-    );
-
-  if (error) {
-    console.warn(
-      "Audit log insert warning:",
-      error.message
+      {
+        status: 500,
+      }
     );
   }
 }

@@ -61,6 +61,19 @@ export interface ToastMessage {
 }
 
 /* =========================================================
+   RBAC PERMISSION TYPES
+========================================================= */
+
+export type Permission =
+  | 'APPROVE_MATERIAL'
+  | 'REJECT_MATERIAL'
+  | 'MIGRATE_MATERIAL'
+  | 'AUDIT'
+  | 'MANAGE_CPSE'
+  | 'PROCUREMENT'
+  | 'ADMIN';
+
+/* =========================================================
    APP CONTEXT TYPE
 ========================================================= */
 
@@ -70,6 +83,10 @@ interface AppContextType {
 
   currentUserRole: UserRole;
   setCurrentUserRole: (role: UserRole) => void;
+
+  hasPermission: (
+    permission: Permission
+  ) => boolean;
 
   language: 'EN' | 'HI';
   setLanguage: (lang: 'EN' | 'HI') => void;
@@ -130,10 +147,24 @@ interface AppContextType {
   setDemoStep: (step: number) => void;
 
   /* Actions */
-  approveMatch: (candidateId: string, note?: string) => void;
-  rejectMatch: (candidateId: string, reason?: string) => void;
-  requestMoreData: (candidateId: string, note?: string) => void;
-  deferMatch: (candidateId: string) => void;
+  approveMatch: (
+    candidateId: string,
+    note?: string
+  ) => void;
+
+  rejectMatch: (
+    candidateId: string,
+    reason?: string
+  ) => void;
+
+  requestMoreData: (
+    candidateId: string,
+    note?: string
+  ) => void;
+
+  deferMatch: (
+    candidateId: string
+  ) => void;
 
   createCommonMaterial: (
     material: Partial<CommonMaterial>
@@ -198,7 +229,6 @@ export const AppProvider: React.FC<{
   const [language, setLanguage] =
     useState<'EN' | 'HI'>('EN');
 
-
   /* =======================================================
      DATA COLLECTIONS
   ======================================================= */
@@ -217,7 +247,6 @@ export const AppProvider: React.FC<{
       []
     );
 
-
   /* =======================================================
      REAL DATABASE MATERIALS
   ======================================================= */
@@ -230,25 +259,14 @@ export const AppProvider: React.FC<{
   const [materialsLoading, setMaterialsLoading] =
     useState(true);
 
-
   /* =======================================================
      COMPANY FILTER
   ======================================================= */
 
-  /*
-    "ALL COMPANIES" is the universal option.
-
-    New companies uploaded to Supabase automatically appear
-    in companyOptions because the options are generated from:
-
-    1. Existing INITIAL_CPSES
-    2. Actual company names in materials table
-  */
   const [selectedCompany, setSelectedCompany] =
     useState<string>(
       'ALL COMPANIES'
     );
-
 
   /* =======================================================
      COMPANY OPTIONS
@@ -311,20 +329,10 @@ export const AppProvider: React.FC<{
 
     }, [materials]);
 
-
   /* =======================================================
      FILTERED MATERIALS
   ======================================================= */
 
-  /*
-    IMPORTANT:
-
-    materials = complete raw database result.
-
-    filteredMaterials = view based on selectedCompany.
-
-    We NEVER modify or delete materials when filtering.
-  */
   const filteredMaterials =
     React.useMemo(() => {
 
@@ -359,7 +367,6 @@ export const AppProvider: React.FC<{
       materials,
       selectedCompany
     ]);
-
 
   /* =======================================================
      EXISTING NON-MATERIAL COLLECTIONS
@@ -415,7 +422,6 @@ export const AppProvider: React.FC<{
       []
     );
 
-
   /* =======================================================
      SELECTION STATES
   ======================================================= */
@@ -444,7 +450,6 @@ export const AppProvider: React.FC<{
     useState<string | null>(
       null
     );
-
 
   /* =======================================================
      MODALS / OVERLAYS
@@ -475,6 +480,83 @@ export const AppProvider: React.FC<{
       0
     );
 
+  /* =======================================================
+     RBAC PERMISSIONS
+  ======================================================= */
+
+  const canApproveMaterials =
+    currentUserRole ===
+      'National Administrator' ||
+    currentUserRole ===
+      'Material Master Officer';
+
+  const canRejectMaterials =
+    currentUserRole ===
+      'National Administrator' ||
+    currentUserRole ===
+      'Material Master Officer';
+
+  const canPerformMigration =
+    currentUserRole ===
+      'National Administrator' ||
+    currentUserRole ===
+      'Material Master Officer';
+
+  const canAudit =
+    currentUserRole ===
+      'National Administrator' ||
+    currentUserRole ===
+      'Auditor';
+
+  const canManageCPSE =
+    currentUserRole ===
+      'National Administrator' ||
+    currentUserRole.startsWith(
+      'CPSE Administrator'
+    );
+
+  const canProcure =
+    currentUserRole ===
+      'National Administrator' ||
+    currentUserRole ===
+      'Procurement Officer';
+
+  const canAdminister =
+    currentUserRole ===
+      'National Administrator';
+
+  const hasPermission = (
+    permission: Permission
+  ) => {
+
+    switch (
+      permission
+    ) {
+      case 'APPROVE_MATERIAL':
+        return canApproveMaterials;
+
+      case 'REJECT_MATERIAL':
+        return canRejectMaterials;
+
+      case 'MIGRATE_MATERIAL':
+        return canPerformMigration;
+
+      case 'AUDIT':
+        return canAudit;
+
+      case 'MANAGE_CPSE':
+        return canManageCPSE;
+
+      case 'PROCUREMENT':
+        return canProcure;
+
+      case 'ADMIN':
+        return canAdminister;
+
+      default:
+        return false;
+    }
+  };
 
   /* =======================================================
      CTRL + K COMMAND PALETTE
@@ -499,12 +581,10 @@ export const AppProvider: React.FC<{
       }
     };
 
-
     window.addEventListener(
       'keydown',
       handleKeyDown
     );
-
 
     return () => {
 
@@ -516,15 +596,8 @@ export const AppProvider: React.FC<{
 
   }, []);
 
-
   /* =======================================================
      LOAD ALL REAL MATERIAL DATA FROM SUPABASE
-
-     Supabase/PostgREST commonly limits a request to 1000 rows.
-     Your database currently has more than 1000 records.
-
-     Therefore we load the table in pages of 1000 using .range()
-     until the final page contains fewer than 1000 records.
   ======================================================= */
 
   useEffect(() => {
@@ -547,14 +620,12 @@ export const AppProvider: React.FC<{
             DatabaseMaterial[] =
               [];
 
-
           while (true) {
 
             const to =
               from +
               pageSize -
               1;
-
 
             const {
               data,
@@ -576,7 +647,6 @@ export const AppProvider: React.FC<{
                   to
                 );
 
-
             if (error) {
 
               console.error(
@@ -591,25 +661,17 @@ export const AppProvider: React.FC<{
               break;
             }
 
-
             const currentPage =
               (data || []) as DatabaseMaterial[];
-
 
             allMaterials.push(
               ...currentPage
             );
 
-
             console.log(
               `Loaded page starting at ${from}: ${currentPage.length} records`
             );
 
-
-            /*
-              If this page contains fewer than 1000 records,
-              we have reached the end of the table.
-            */
             if (
               currentPage.length <
               pageSize
@@ -617,31 +679,23 @@ export const AppProvider: React.FC<{
               break;
             }
 
-
             from +=
               pageSize;
           }
-
 
           setMaterials(
             allMaterials
           );
 
-
           console.log(
             `Total materials loaded from Supabase: ${allMaterials.length}`
           );
 
-
-          /*
-            Helpful company breakdown in browser console.
-          */
           const companyCounts:
             Record<
               string,
               number
             > = {};
-
 
           allMaterials.forEach(
             material => {
@@ -655,7 +709,6 @@ export const AppProvider: React.FC<{
                 return;
               }
 
-
               companyCounts[
                 company
               ] =
@@ -666,7 +719,6 @@ export const AppProvider: React.FC<{
                 ) + 1;
             }
           );
-
 
           console.log(
             'Company material counts:',
@@ -692,11 +744,9 @@ export const AppProvider: React.FC<{
         }
       };
 
-
     loadMaterials();
 
   }, []);
-
 
   /* =======================================================
      KEEP SELECTED COMPANY VALID
@@ -704,10 +754,6 @@ export const AppProvider: React.FC<{
 
   useEffect(() => {
 
-    /*
-      If a company was selected but that company disappears
-      from the available options, safely return to ALL COMPANIES.
-    */
     if (
       !companyOptions.includes(
         selectedCompany
@@ -724,7 +770,6 @@ export const AppProvider: React.FC<{
     selectedCompany
   ]);
 
-
   /* =======================================================
      UPDATE CPSE MATERIAL COUNTS FROM REAL DATABASE
   ======================================================= */
@@ -737,13 +782,11 @@ export const AppProvider: React.FC<{
       return;
     }
 
-
     const companyCounts:
       Record<
         string,
         number
       > = {};
-
 
     materials.forEach(
       material => {
@@ -757,7 +800,6 @@ export const AppProvider: React.FC<{
           return;
         }
 
-
         companyCounts[
           company
         ] =
@@ -769,7 +811,6 @@ export const AppProvider: React.FC<{
       }
     );
 
-
     setCpses(
       prevCpses =>
         prevCpses.map(
@@ -780,12 +821,10 @@ export const AppProvider: React.FC<{
                 ?.trim()
                 .toUpperCase();
 
-
             const actualMaterialCount =
               companyCounts[
                 code
               ] || 0;
-
 
             return {
               ...cpse,
@@ -823,7 +862,6 @@ export const AppProvider: React.FC<{
     materialsLoading
   ]);
 
-
   /* =======================================================
      TOAST FUNCTIONS
   ======================================================= */
@@ -841,13 +879,11 @@ export const AppProvider: React.FC<{
         .toString(36)
         .substring(2, 9);
 
-
     const newToast:
       ToastMessage = {
         ...toast,
         id
       };
-
 
     setToasts(
       prev => [
@@ -855,7 +891,6 @@ export const AppProvider: React.FC<{
         newToast
       ]
     );
-
 
     setTimeout(
       () => {
@@ -866,7 +901,6 @@ export const AppProvider: React.FC<{
       4500
     );
   };
-
 
   const removeToast = (
     id: string
@@ -881,7 +915,6 @@ export const AppProvider: React.FC<{
         )
     );
   };
-
 
   /* =======================================================
      NOTIFICATIONS
@@ -906,7 +939,6 @@ export const AppProvider: React.FC<{
     );
   };
 
-
   /* =======================================================
      MATERIAL 360 NAVIGATION
   ======================================================= */
@@ -923,7 +955,6 @@ export const AppProvider: React.FC<{
       'material-360'
     );
   };
-
 
   /* =======================================================
      AI MATCH NAVIGATION
@@ -942,7 +973,6 @@ export const AppProvider: React.FC<{
     );
   };
 
-
   /* =======================================================
      APPROVE MATCH
   ======================================================= */
@@ -952,6 +982,26 @@ export const AppProvider: React.FC<{
     note?: string
   ) => {
 
+    if (
+      !hasPermission(
+        'APPROVE_MATERIAL'
+      )
+    ) {
+
+      addToast({
+        title:
+          'Permission Denied',
+
+        message:
+          'Your current role is not authorized to approve material mappings.',
+
+        type:
+          'error'
+      });
+
+      return;
+    }
+
     const candidate =
       candidates.find(
         c =>
@@ -959,11 +1009,9 @@ export const AppProvider: React.FC<{
           candidateId
       );
 
-
     if (!candidate) {
       return;
     }
-
 
     setCandidates(
       prev =>
@@ -979,7 +1027,6 @@ export const AppProvider: React.FC<{
               : candidateItem
         )
     );
-
 
     setReviews(
       prev =>
@@ -1014,11 +1061,9 @@ export const AppProvider: React.FC<{
         )
     );
 
-
     const targetBmgId =
       candidate.targetBmgId ||
       'UNASSIGNED';
-
 
     const newAudit:
       AuditEvent = {
@@ -1073,14 +1118,12 @@ export const AppProvider: React.FC<{
           'NOT_AVAILABLE'
       };
 
-
     setAuditEvents(
       prev => [
         newAudit,
         ...prev
       ]
     );
-
 
     addToast({
 
@@ -1095,7 +1138,6 @@ export const AppProvider: React.FC<{
     });
   };
 
-
   /* =======================================================
      REJECT MATCH
   ======================================================= */
@@ -1105,6 +1147,26 @@ export const AppProvider: React.FC<{
     reason?: string
   ) => {
 
+    if (
+      !hasPermission(
+        'REJECT_MATERIAL'
+      )
+    ) {
+
+      addToast({
+        title:
+          'Permission Denied',
+
+        message:
+          'Your current role is not authorized to reject material mappings.',
+
+        type:
+          'error'
+      });
+
+      return;
+    }
+
     const candidate =
       candidates.find(
         c =>
@@ -1112,11 +1174,9 @@ export const AppProvider: React.FC<{
           candidateId
       );
 
-
     if (!candidate) {
       return;
     }
-
 
     setCandidates(
       prev =>
@@ -1132,7 +1192,6 @@ export const AppProvider: React.FC<{
               : candidateItem
         )
     );
-
 
     setReviews(
       prev =>
@@ -1166,7 +1225,6 @@ export const AppProvider: React.FC<{
               : review
         )
     );
-
 
     const newAudit:
       AuditEvent = {
@@ -1222,14 +1280,12 @@ export const AppProvider: React.FC<{
           'NOT_AVAILABLE'
       };
 
-
     setAuditEvents(
       prev => [
         newAudit,
         ...prev
       ]
     );
-
 
     addToast({
 
@@ -1243,7 +1299,6 @@ export const AppProvider: React.FC<{
         'warning'
     });
   };
-
 
   /* =======================================================
      REQUEST MORE DATA
@@ -1268,7 +1323,6 @@ export const AppProvider: React.FC<{
               : candidate
         )
     );
-
 
     setReviews(
       prev =>
@@ -1303,7 +1357,6 @@ export const AppProvider: React.FC<{
         )
     );
 
-
     addToast({
 
       title:
@@ -1316,7 +1369,6 @@ export const AppProvider: React.FC<{
         'info'
     });
   };
-
 
   /* =======================================================
      DEFER MATCH
@@ -1341,7 +1393,6 @@ export const AppProvider: React.FC<{
         )
     );
 
-
     setReviews(
       prev =>
         prev.map(
@@ -1357,7 +1408,6 @@ export const AppProvider: React.FC<{
         )
     );
 
-
     addToast({
 
       title:
@@ -1371,7 +1421,6 @@ export const AppProvider: React.FC<{
     });
   };
 
-
   /* =======================================================
      CREATE COMMON MATERIAL
   ======================================================= */
@@ -1382,7 +1431,6 @@ export const AppProvider: React.FC<{
 
     const newId =
       `LOCAL-${Date.now()}`;
-
 
     const newMaterial:
       CommonMaterial = {
@@ -1467,14 +1515,12 @@ export const AppProvider: React.FC<{
         'No description available.'
     };
 
-
     setCommonMaterials(
       prev => [
         newMaterial,
         ...prev
       ]
     );
-
 
     addToast({
 
@@ -1488,12 +1534,10 @@ export const AppProvider: React.FC<{
         'success'
     });
 
-
     openMaterial360(
       newId
     );
   };
-
 
   /* =======================================================
      CLEANUP RULE
@@ -1510,11 +1554,9 @@ export const AppProvider: React.FC<{
           issueId
       );
 
-
     if (!issue) {
       return;
     }
-
 
     setQualityIssues(
       prev =>
@@ -1530,7 +1572,6 @@ export const AppProvider: React.FC<{
               : issueItem
         )
     );
-
 
     const newAudit:
       AuditEvent = {
@@ -1584,14 +1625,12 @@ export const AppProvider: React.FC<{
         'NOT_AVAILABLE'
     };
 
-
     setAuditEvents(
       prev => [
         newAudit,
         ...prev
       ]
     );
-
 
     addToast({
 
@@ -1605,7 +1644,6 @@ export const AppProvider: React.FC<{
         'success'
     });
   };
-
 
   /* =======================================================
      SIH DEMO
@@ -1622,7 +1660,6 @@ export const AppProvider: React.FC<{
     );
   };
 
-
   /* =======================================================
      PROVIDER
   ======================================================= */
@@ -1636,6 +1673,8 @@ export const AppProvider: React.FC<{
 
         currentUserRole,
         setCurrentUserRole,
+
+        hasPermission,
 
         language,
         setLanguage,
@@ -1729,13 +1768,13 @@ export const AppProvider: React.FC<{
         openMaterial360,
 
         openCandidateMatch
+
       }}
     >
       {children}
     </AppContext.Provider>
   );
 };
-
 
 /* =========================================================
    useApp

@@ -1,18 +1,19 @@
-export type TabType = 
+export type TabType =
   | 'home'
   | 'dashboard'
-  | 'login'
-  | 'ai-match'
-  | 'review-queue'
   | 'upload'
   | 'quality'
+  | 'ai-match'
+  | 'review-queue'
   | 'master'
   | 'material-360'
   | 'procurement'
   | 'what-if'
   | 'cpse'
+  | 'migration'
   | 'audit'
-  | 'admin';
+  | 'admin'
+  | 'login';
 
 export type UserRole = 
   | 'National Administrator'

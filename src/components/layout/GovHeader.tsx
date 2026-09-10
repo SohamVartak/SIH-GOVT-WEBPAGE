@@ -29,10 +29,10 @@ import {
   Sparkles,
   UserRound,
   Mail,
+  ArrowRightLeft,
 } from 'lucide-react';
 
 export const GovHeader: React.FC = () => {
-
   const {
     currentTab,
     setCurrentTab,
@@ -54,12 +54,10 @@ export const GovHeader: React.FC = () => {
     language,
     setLanguage,
 
-    /* COMPANY FILTER */
     companyOptions,
     selectedCompany,
     setSelectedCompany,
   } = useApp();
-
 
   /* =========================================================
      DROPDOWN STATES
@@ -74,14 +72,12 @@ export const GovHeader: React.FC = () => {
   const [isProfileOpen, setIsProfileOpen] =
     useState(false);
 
-
   /* =========================================================
      FONT SIZE
   ========================================================= */
 
   const [fontSize, setFontSize] =
     useState<'sm' | 'base' | 'lg'>('base');
-
 
   /* =========================================================
      USER
@@ -93,14 +89,12 @@ export const GovHeader: React.FC = () => {
   const [userEmail, setUserEmail] =
     useState('');
 
-
   /* =========================================================
      NAVIGATION REF
   ========================================================= */
 
   const navContainerRef =
     useRef<HTMLDivElement>(null);
-
 
   /* =========================================================
      NOTIFICATION COUNT
@@ -110,7 +104,6 @@ export const GovHeader: React.FC = () => {
     notifications.filter(
       n => !n.read
     ).length;
-
 
   /* =========================================================
      REVIEW COUNT
@@ -123,7 +116,6 @@ export const GovHeader: React.FC = () => {
         r.status === 'High Priority'
     ).length;
 
-
   /* =========================================================
      AI MATCH COUNT
   ========================================================= */
@@ -134,33 +126,24 @@ export const GovHeader: React.FC = () => {
         c.status === 'Pending'
     ).length;
 
-
   /* =========================================================
      GET CURRENT SUPABASE USER
   ========================================================= */
 
   useEffect(() => {
-
     const getUser = async () => {
-
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-
       if (user) {
-
         const fullName =
           user.user_metadata?.full_name ||
           user.user_metadata?.name ||
           user.email?.split('@')[0] ||
           'User';
 
-
-        setUserName(
-          fullName
-        );
-
+        setUserName(fullName);
 
         setUserEmail(
           user.email || ''
@@ -168,56 +151,36 @@ export const GovHeader: React.FC = () => {
       }
     };
 
-
     getUser();
-
 
     const {
       data: { subscription },
     } =
       supabase.auth.onAuthStateChange(
         (_event, session) => {
-
           if (session?.user) {
-
             const fullName =
               session.user.user_metadata?.full_name ||
               session.user.user_metadata?.name ||
               session.user.email?.split('@')[0] ||
               'User';
 
-
-            setUserName(
-              fullName
-            );
-
+            setUserName(fullName);
 
             setUserEmail(
               session.user.email || ''
             );
-
           } else {
-
-            setUserName(
-              'User'
-            );
-
-            setUserEmail(
-              ''
-            );
+            setUserName('User');
+            setUserEmail('');
           }
         }
       );
 
-
     return () => {
-
       subscription.unsubscribe();
-
     };
-
   }, []);
-
 
   /* =========================================================
      ROLES
@@ -233,7 +196,6 @@ export const GovHeader: React.FC = () => {
     'Executive Management',
   ];
 
-
   /* =========================================================
      FONT SIZE HANDLER
   ========================================================= */
@@ -241,29 +203,19 @@ export const GovHeader: React.FC = () => {
   const handleFontSize = (
     size: 'sm' | 'base' | 'lg'
   ) => {
-
-    setFontSize(
-      size
-    );
-
+    setFontSize(size);
 
     if (size === 'sm') {
-
       document.documentElement.style.fontSize =
         '14px';
-
     } else if (size === 'lg') {
-
       document.documentElement.style.fontSize =
         '18px';
-
     } else {
-
       document.documentElement.style.fontSize =
         '16px';
     }
   };
-
 
   /* =========================================================
      NAVIGATION HANDLER
@@ -273,11 +225,7 @@ export const GovHeader: React.FC = () => {
     tabId: TabType,
     e: React.MouseEvent<HTMLButtonElement>
   ) => {
-
-    setCurrentTab(
-      tabId
-    );
-
+    setCurrentTab(tabId);
 
     e.currentTarget.scrollIntoView({
       behavior: 'smooth',
@@ -286,7 +234,6 @@ export const GovHeader: React.FC = () => {
     });
   };
 
-
   /* =========================================================
      COMPANY SELECTION
   ========================================================= */
@@ -294,35 +241,22 @@ export const GovHeader: React.FC = () => {
   const handleCompanySelect = (
     company: string
   ) => {
+    setSelectedCompany(company);
 
-    setSelectedCompany(
-      company
-    );
-
-    setIsCompanyDropdownOpen(
-      false
-    );
+    setIsCompanyDropdownOpen(false);
   };
-
 
   /* =========================================================
      LOGOUT
   ========================================================= */
 
   const handleLogout = async () => {
-
-    setIsProfileOpen(
-      false
-    );
-
+    setIsProfileOpen(false);
 
     await supabase.auth.signOut();
 
-
-    window.location.href =
-      '/';
+    window.location.href = '/';
   };
-
 
   /* =========================================================
      NAV LINKS
@@ -335,7 +269,6 @@ export const GovHeader: React.FC = () => {
     icon: React.ReactNode;
     badge?: number;
   }[] = [
-
     {
       id: 'home',
       label: 'Home',
@@ -386,14 +319,12 @@ export const GovHeader: React.FC = () => {
     },
 
     {
-     
-         id: 'procurement',
-          label: 'Part Search & Datasheets',
-          hindiLabel: 'पार्ट खोज एवं डेटाशीट',
-         icon:
-         ( <Search className="w-3.5 h-3.5" />
-         )
-      
+      id: 'procurement',
+      label: 'Part Search & Datasheets',
+      hindiLabel: 'पार्ट खोज एवं डेटाशीट',
+      icon: (
+        <Search className="w-3.5 h-3.5" />
+      ),
     },
 
     {
@@ -402,6 +333,19 @@ export const GovHeader: React.FC = () => {
       hindiLabel: 'सीपीएसई निर्देशिका',
       icon: (
         <Building className="w-3.5 h-3.5" />
+      ),
+    },
+
+    /* =======================================================
+       NEW: ERP / LEGACY MATERIAL MIGRATION
+    ======================================================= */
+
+    {
+      id: 'migration',
+      label: 'ERP Migration',
+      hindiLabel: 'ईआरपी माइग्रेशन',
+      icon: (
+        <ArrowRightLeft className="w-3.5 h-3.5" />
       ),
     },
 
@@ -424,13 +368,11 @@ export const GovHeader: React.FC = () => {
     },
   ];
 
-
   /* =========================================================
      UI
   ========================================================= */
 
   return (
-
     <header className="w-full bg-white border-b border-slate-200 shadow-sm z-30 select-none">
 
       {/* =====================================================
@@ -438,15 +380,10 @@ export const GovHeader: React.FC = () => {
       ===================================================== */}
 
       <div className="h-1.5 w-full flex">
-
         <div className="flex-1 bg-[#FF9933]" />
-
         <div className="flex-1 bg-[#FFFFFF] border-y border-slate-100" />
-
         <div className="flex-1 bg-[#138808]" />
-
       </div>
-
 
       {/* =====================================================
           2. GOVERNMENT UTILITY STRIP
@@ -474,18 +411,15 @@ export const GovHeader: React.FC = () => {
 
           </div>
 
-
           <span className="hidden md:inline text-slate-400">
             •
           </span>
-
 
           <span className="hidden md:inline text-slate-200">
             भारी उद्योग मंत्रालय (Ministry of Heavy Industries & Public Enterprises)
           </span>
 
         </div>
-
 
         {/* RIGHT */}
 
@@ -503,7 +437,6 @@ export const GovHeader: React.FC = () => {
 
           </div>
 
-
           {/* FONT SIZE */}
 
           <div className="flex items-center gap-1 bg-[#001730] px-2 py-0.5 rounded border border-slate-700 text-[10px] font-mono">
@@ -511,7 +444,6 @@ export const GovHeader: React.FC = () => {
             <span className="text-slate-400 mr-0.5">
               Text:
             </span>
-
 
             <button
               onClick={() =>
@@ -526,7 +458,6 @@ export const GovHeader: React.FC = () => {
               A-
             </button>
 
-
             <button
               onClick={() =>
                 handleFontSize('base')
@@ -539,7 +470,6 @@ export const GovHeader: React.FC = () => {
             >
               A
             </button>
-
 
             <button
               onClick={() =>
@@ -556,13 +486,11 @@ export const GovHeader: React.FC = () => {
 
           </div>
 
-
           {/* LANGUAGE */}
 
           <div className="flex items-center gap-1.5 bg-[#001730] px-2.5 py-0.5 rounded border border-slate-700 text-[10px]">
 
             <Globe className="w-3 h-3 text-amber-400" />
-
 
             <button
               onClick={() =>
@@ -585,11 +513,9 @@ export const GovHeader: React.FC = () => {
 
             </button>
 
-
             <span className="text-slate-600">
               |
             </span>
-
 
             <button
               onClick={() =>
@@ -606,9 +532,7 @@ export const GovHeader: React.FC = () => {
 
           </div>
 
-
           <div className="h-4 w-px bg-slate-700 hidden sm:block" />
-
 
           {/* =================================================
               COMPANY SELECTOR
@@ -634,7 +558,6 @@ export const GovHeader: React.FC = () => {
 
               <Building className="w-3.5 h-3.5 text-emerald-400" />
 
-
               <div className="flex flex-col items-start leading-tight">
 
                 <span className="text-[8px] uppercase tracking-wider text-slate-400 font-bold">
@@ -647,7 +570,6 @@ export const GovHeader: React.FC = () => {
 
               </div>
 
-
               <ChevronDown
                 className={`w-3 h-3 text-slate-300 transition-transform ${
                   isCompanyDropdownOpen
@@ -658,12 +580,9 @@ export const GovHeader: React.FC = () => {
 
             </motion.button>
 
-
             {isCompanyDropdownOpen && (
 
               <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-300 rounded-xl shadow-2xl py-1.5 z-[80]">
-
-                {/* HEADER */}
 
                 <div className="px-3 py-2 border-b border-slate-100 bg-slate-50">
 
@@ -677,17 +596,12 @@ export const GovHeader: React.FC = () => {
 
                 </div>
 
-
-                {/* COMPANY LIST */}
-
                 <div className="max-h-72 overflow-y-auto py-1">
 
                   {companyOptions.length === 0 ? (
 
                     <div className="px-3 py-4 text-center text-xs text-slate-500">
-
                       No companies available
-
                     </div>
 
                   ) : (
@@ -699,9 +613,7 @@ export const GovHeader: React.FC = () => {
                           selectedCompany ===
                           company;
 
-
                         return (
-
                           <button
                             key={company}
                             onClick={() =>
@@ -735,25 +647,17 @@ export const GovHeader: React.FC = () => {
 
                             </span>
 
-
                             {isSelected && (
-
                               <span className="w-2 h-2 rounded-full bg-emerald-600" />
-
                             )}
 
                           </button>
-
                         );
                       }
                     )
-
                   )}
 
                 </div>
-
-
-                {/* FOOTER */}
 
                 <div className="border-t border-slate-100 px-3 py-2 bg-slate-50">
 
@@ -768,16 +672,13 @@ export const GovHeader: React.FC = () => {
                 </div>
 
               </div>
-
             )}
 
           </div>
 
-
           {/* DIVIDER */}
 
           <div className="h-4 w-px bg-slate-700 hidden sm:block" />
-
 
           {/* =================================================
               ROLE SELECTOR
@@ -802,7 +703,6 @@ export const GovHeader: React.FC = () => {
 
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
 
-
               <span className="font-extrabold text-amber-300 text-[11px] tracking-wide">
 
                 {currentUserRole.includes(
@@ -815,11 +715,9 @@ export const GovHeader: React.FC = () => {
 
               </span>
 
-
               <ChevronDown className="w-3 h-3 text-slate-300" />
 
             </motion.button>
-
 
             {isRoleDropdownOpen && (
 
@@ -836,7 +734,6 @@ export const GovHeader: React.FC = () => {
                   </div>
 
                 </div>
-
 
                 <div className="max-h-60 overflow-y-auto py-1">
 
@@ -868,7 +765,6 @@ export const GovHeader: React.FC = () => {
                           {role}
                         </span>
 
-
                         {currentUserRole ===
                           role && (
 
@@ -893,7 +789,6 @@ export const GovHeader: React.FC = () => {
 
       </div>
 
-
       {/* =====================================================
           3. MAIN TITLE BAR
       ===================================================== */}
@@ -907,9 +802,7 @@ export const GovHeader: React.FC = () => {
           <div
             className="flex items-center gap-3.5 cursor-pointer group"
             onClick={() =>
-              setCurrentTab(
-                'home'
-              )
+              setCurrentTab('home')
             }
           >
 
@@ -931,9 +824,7 @@ export const GovHeader: React.FC = () => {
 
             </motion.div>
 
-
             <div className="h-11 w-px bg-slate-200 hidden sm:block" />
-
 
             <div>
 
@@ -943,18 +834,15 @@ export const GovHeader: React.FC = () => {
                   भारत मटेरियल ग्रिड
                 </h1>
 
-
                 <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black px-2 py-0.5 rounded uppercase font-mono tracking-wider">
                   BHARAT MATERIAL GRID
                 </span>
-
 
                 <span className="bg-emerald-100 text-emerald-900 border border-emerald-300 text-[9px] font-bold px-1.5 py-0.5 rounded font-mono">
                   GOV.IN PORTAL
                 </span>
 
               </div>
-
 
               <p className="text-xs text-slate-600 font-medium leading-tight mt-1">
                 राष्ट्रीय सीपीएसई सामग्री मानकीकरण एवं समन्वय पोर्टल
@@ -964,7 +852,6 @@ export const GovHeader: React.FC = () => {
             </div>
 
           </div>
-
 
           {/* RIGHT */}
 
@@ -983,7 +870,6 @@ export const GovHeader: React.FC = () => {
               />
 
             </div>
-
 
             {/* DEMO */}
 
@@ -1007,7 +893,6 @@ export const GovHeader: React.FC = () => {
               </span>
 
             </motion.button>
-
 
             {/* AI COPILOT */}
 
@@ -1033,7 +918,6 @@ export const GovHeader: React.FC = () => {
               </span>
 
             </motion.button>
-
 
             {/* SEARCH */}
 
@@ -1064,7 +948,6 @@ export const GovHeader: React.FC = () => {
 
             </motion.button>
 
-
             {/* NOTIFICATIONS */}
 
             <motion.button
@@ -1084,19 +967,13 @@ export const GovHeader: React.FC = () => {
 
               <Bell className="w-4 h-4 text-slate-700" />
 
-
               {unreadCount > 0 && (
-
                 <span className="absolute -top-1 -right-1 min-w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center px-1 border border-white">
-
                   {unreadCount}
-
                 </span>
-
               )}
 
             </motion.button>
-
 
             {/* =================================================
                 ACCOUNT
@@ -1125,7 +1002,6 @@ export const GovHeader: React.FC = () => {
 
                 </div>
 
-
                 <div className="hidden md:flex flex-col items-start leading-tight max-w-32">
 
                   <span className="text-xs font-bold truncate w-full text-left">
@@ -1138,7 +1014,6 @@ export const GovHeader: React.FC = () => {
 
                 </div>
 
-
                 <ChevronDown
                   className={`w-3.5 h-3.5 transition-transform ${
                     isProfileOpen
@@ -1148,7 +1023,6 @@ export const GovHeader: React.FC = () => {
                 />
 
               </motion.button>
-
 
               {/* ACCOUNT DROPDOWN */}
 
@@ -1164,7 +1038,6 @@ export const GovHeader: React.FC = () => {
 
                     </div>
 
-
                     <div className="min-w-0">
 
                       <div className="text-base font-bold text-slate-900 truncate">
@@ -1179,20 +1052,17 @@ export const GovHeader: React.FC = () => {
 
                   </div>
 
-
                   <div className="py-4">
 
                     <div className="flex items-start gap-3">
 
                       <Mail className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
 
-
                       <div className="min-w-0">
 
                         <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
                           Email
                         </div>
-
 
                         <div className="mt-1 text-sm font-medium text-slate-800 break-all">
                           {userEmail ||
@@ -1204,7 +1074,6 @@ export const GovHeader: React.FC = () => {
                     </div>
 
                   </div>
-
 
                   <button
                     onClick={
@@ -1231,7 +1100,6 @@ export const GovHeader: React.FC = () => {
 
       </div>
 
-
       {/* =====================================================
           4. NAVIGATION
       ===================================================== */}
@@ -1251,7 +1119,6 @@ export const GovHeader: React.FC = () => {
               const isActive =
                 currentTab ===
                 link.id;
-
 
               return (
 
@@ -1280,14 +1147,12 @@ export const GovHeader: React.FC = () => {
                     {link.icon}
                   </span>
 
-
                   <span>
                     {language ===
                     'HI'
                       ? link.hindiLabel
                       : link.label}
                   </span>
-
 
                   {link.badge !==
                     undefined &&
@@ -1299,7 +1164,6 @@ export const GovHeader: React.FC = () => {
                     </span>
 
                   )}
-
 
                   {isActive && (
 
@@ -1318,14 +1182,12 @@ export const GovHeader: React.FC = () => {
                 </motion.button>
 
               );
-
             }
           )}
 
         </div>
 
       </nav>
-
 
       {/* =====================================================
           5. CIRCULAR STRIP
@@ -1342,7 +1204,6 @@ export const GovHeader: React.FC = () => {
           </span>
 
         </div>
-
 
         <div className="text-slate-800 font-medium truncate flex-1 flex items-center gap-4 text-xs">
 
@@ -1362,11 +1223,9 @@ export const GovHeader: React.FC = () => {
 
           </span>
 
-
           <span className="hidden lg:inline text-slate-400">
             •
           </span>
-
 
           <span className="hidden lg:inline text-slate-600">
 
@@ -1376,7 +1235,6 @@ export const GovHeader: React.FC = () => {
           </span>
 
         </div>
-
 
         <button
           onClick={() =>

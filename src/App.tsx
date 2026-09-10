@@ -1,8 +1,10 @@
 import React from 'react';
 import { useApp } from './context/AppContext';
+
 import { GovHeader } from './components/layout/GovHeader';
 import { GovBreadcrumb } from './components/layout/GovBreadcrumb';
 import { GovFooter } from './components/layout/GovFooter';
+
 import { ToastContainer } from './components/common/ToastContainer';
 import { NotificationsDrawer } from './components/common/NotificationsDrawer';
 import { CommandPalette } from './components/common/CommandPalette';
@@ -25,21 +27,42 @@ import { AuditCenterView } from './components/views/AuditCenterView';
 import { AdminView } from './components/views/AdminView';
 import { LoginView } from './components/views/LoginView';
 
+// New ERP / Legacy Migration View
+import { MaterialMigrationView } from './components/views/MaterialMigrationView';
+
 export const App: React.FC = () => {
-  const { currentTab, setCurrentTab } = useApp();
+  const {
+    currentTab,
+    setCurrentTab,
+  } = useApp();
 
   React.useEffect(() => {
     const syncRoute = () => {
-      if (window.location.pathname === '/login') {
+      if (
+        window.location.pathname === '/login'
+      ) {
         setCurrentTab('login');
       }
     };
+
     syncRoute();
-    window.addEventListener('popstate', syncRoute);
-    return () => window.removeEventListener('popstate', syncRoute);
+
+    window.addEventListener(
+      'popstate',
+      syncRoute
+    );
+
+    return () =>
+      window.removeEventListener(
+        'popstate',
+        syncRoute
+      );
   }, [setCurrentTab]);
 
-  // Dedicated Government Login Page
+  // ==========================================================
+  // GOVERNMENT LOGIN PAGE
+  // ==========================================================
+
   if (currentTab === 'login') {
     return (
       <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans">
@@ -49,61 +72,106 @@ export const App: React.FC = () => {
     );
   }
 
+  // ==========================================================
+  // ACTIVE VIEW
+  // ==========================================================
+
   const renderActiveView = () => {
     switch (currentTab) {
       case 'home':
         return <HomeView />;
+
       case 'dashboard':
         return <DashboardView />;
+
       case 'upload':
         return <UploadWorkflowView />;
+
       case 'quality':
         return <DataQualityView />;
+
       case 'ai-match':
         return <AIMatchCenterView />;
+
       case 'review-queue':
         return <ReviewQueueView />;
+
       case 'master':
         return <CommonMasterView />;
+
       case 'material-360':
         return <Material360View />;
+
+      // ======================================================
+      // PART SEARCH & DATASHEETS
+      // ======================================================
+
       case 'procurement':
       case 'what-if':
         return <ProcurementView />;
+
+      // ======================================================
+      // CPSE MANAGEMENT
+      // ======================================================
+
       case 'cpse':
         return <CPSEManagementView />;
+
+      // ======================================================
+      // ERP / LEGACY MATERIAL MIGRATION
+      // ======================================================
+
+      case 'migration':
+        return <MaterialMigrationView />;
+
+      // ======================================================
+      // AUDIT & GOVERNANCE
+      // ======================================================
+
       case 'audit':
         return <AuditCenterView />;
+
+      // ======================================================
+      // ADMINISTRATION
+      // ======================================================
+
       case 'admin':
         return <AdminView />;
+
       default:
         return <HomeView />;
     }
   };
 
+  // ==========================================================
+  // MAIN GOVERNMENT PORTAL
+  // ==========================================================
+
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans selection:bg-amber-500 selection:text-white">
-      {/* 1. Sovereign Government Header & Navigation */}
+
+      {/* Government Header */}
       <GovHeader />
 
-      {/* 2. Breadcrumb Navigation Trail */}
+      {/* Breadcrumb */}
       <GovBreadcrumb />
 
-      {/* 3. Full-Width Government Portal Page Content */}
+      {/* Main Content */}
       <main className="flex-1 w-full min-w-0 bg-[#f8fafc]">
         {renderActiveView()}
       </main>
 
-      {/* 4. Sovereign Government Footer */}
+      {/* Government Footer */}
       <GovFooter />
 
-      {/* 5. Enterprise Overlays & Modals */}
+      {/* Enterprise Overlays */}
       <FloatingChatbotButton />
       <BharatAIAssistant />
       <NotificationsDrawer />
       <CommandPalette />
       <SIHDemoModal />
       <ToastContainer />
+
     </div>
   );
 };

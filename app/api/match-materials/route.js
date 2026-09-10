@@ -4,13 +4,13 @@ import { GoogleGenAI } from "@google/genai";
 
 export const runtime = "nodejs";
 
+/* ============================================================
+   GEMINI
+============================================================ */
+
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
-
-/* ============================================================
-   CONSTANTS
-============================================================ */
 
 const GEMINI_MODELS = [
   "gemini-3.8-flash",
@@ -19,6 +19,21 @@ const GEMINI_MODELS = [
 ];
 
 const MAX_MODEL_ATTEMPTS = 3;
+
+/* ============================================================
+   EMBEDDING
+============================================================ */
+
+const EMBEDDING_MODEL = "gemini-embedding-2";
+const EMBEDDING_DIMENSIONS = 768;
+
+/* ============================================================
+   MATCHING LIMITS
+============================================================ */
+
+const VECTOR_RETRIEVAL_COUNT = 100;
+const FINAL_CANDIDATE_COUNT = 30;
+const MAX_CANDIDATES_PER_COMPANY = 5;
 
 /* ============================================================
    TEXT HELPERS
@@ -71,7 +86,6 @@ function tokenSimilarity(a, b) {
 
 function numberOrZero(value) {
   const number = Number(value);
-
   return Number.isFinite(number) ? number : 0;
 }
 
@@ -92,7 +106,7 @@ function safeObject(value) {
 }
 
 /* ============================================================
-   GEMINI RETRY HELPERS
+   GEMINI RETRY
 ============================================================ */
 
 function getErrorStatus(error) {
@@ -136,10 +150,15 @@ function isRetryableGeminiError(error) {
 }
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) =>
+    setTimeout(resolve, ms)
+  );
 }
 
-async function generateWithRetry(prompt, config) {
+async function generateWithRetry(
+  prompt,
+  config
+) {
   let lastError = null;
 
   for (
@@ -147,7 +166,8 @@ async function generateWithRetry(prompt, config) {
     modelIndex < GEMINI_MODELS.length;
     modelIndex++
   ) {
-    const model = GEMINI_MODELS[modelIndex];
+    const model =
+      GEMINI_MODELS[modelIndex];
 
     for (
       let attempt = 1;
@@ -191,16 +211,23 @@ async function generateWithRetry(prompt, config) {
           throw error;
         }
 
-        if (attempt < MAX_MODEL_ATTEMPTS) {
+        if (
+          attempt < MAX_MODEL_ATTEMPTS
+        ) {
           const baseDelay =
             1500 *
-            Math.pow(2, attempt - 1);
+            Math.pow(
+              2,
+              attempt - 1
+            );
 
-          const jitter = Math.floor(
-            Math.random() * 750
-          );
+          const jitter =
+            Math.floor(
+              Math.random() * 750
+            );
 
-          const delay = baseDelay + jitter;
+          const delay =
+            baseDelay + jitter;
 
           console.log(
             `Retrying Gemini in ${delay}ms...`
@@ -255,7 +282,13 @@ function buildAttributeText(detail) {
       if (
         typeof value === "object"
       ) {
-        return JSON.stringify(value);
+        try {
+          return JSON.stringify(
+            value
+          );
+        } catch {
+          return "";
+        }
       }
 
       return String(value);
@@ -263,7 +296,10 @@ function buildAttributeText(detail) {
     .join(" ");
 }
 
-function buildMaterialText(material, detail) {
+function buildMaterialText(
+  material,
+  detail
+) {
   return [
     material.company,
     material.material_number,
@@ -276,7 +312,62 @@ function buildMaterialText(material, detail) {
     .join(" ");
 }
 
-function getMaterialFamily(material, detail) {
+function buildEngineeringText(
+  material,
+  detail
+) {
+  return [
+    `material name: ${
+      material.description || ""
+    }`,
+    `material family: ${
+      detail?.material_family || ""
+    }`,
+    `specifications: ${
+      material.specifications || ""
+    }`,
+    `category: ${
+      material.category || ""
+    }`,
+    `dimensions: ${
+      detail?.dimensions || ""
+    }`,
+    `material grade: ${
+      detail?.material_grade || ""
+    }`,
+    `pressure rating: ${
+      detail?.pressure_rating || ""
+    }`,
+    `temperature rating: ${
+      detail?.temperature_rating || ""
+    }`,
+    `standards: ${
+      detail?.standards || ""
+    }`,
+    `manufacturer: ${
+      detail?.manufacturer || ""
+    }`,
+    `model: ${
+      detail?.model || ""
+    }`,
+    `design features: ${
+      detail?.design_features || ""
+    }`,
+    `other attributes: ${
+      detail?.other_attributes || ""
+    }`,
+  ]
+    .filter(
+      (value) =>
+        String(value).trim().length > 0
+    )
+    .join("\n");
+}
+
+function getMaterialFamily(
+  material,
+  detail
+) {
   return normalizeText(
     detail?.material_family ||
       material?.category ||
@@ -285,118 +376,191 @@ function getMaterialFamily(material, detail) {
 }
 
 /* ============================================================
-   LOAD ALL MATERIALS
+   PRODUCT FAMILY DETECTION
 ============================================================ */
 
-async function loadAllMaterials(supabase) {
-  const pageSize = 1000;
-  let from = 0;
-  const all = [];
-
-  while (true) {
-    const to = from + pageSize - 1;
-
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("materials")
-      .select(
-        "id, company, company_id, material_number, description, specifications, category"
-      )
-      .order("id", {
-        ascending: true,
-      })
-      .range(from, to);
-
-    if (error) {
-      throw new Error(
-        `Failed to load material catalog: ${error.message}`
-      );
-    }
-
-    const page = data || [];
-
-    all.push(...page);
-
-    if (page.length < pageSize) {
-      break;
-    }
-
-    from += pageSize;
-  }
-
-  return all;
-}
-
-/* ============================================================
-   LOAD MATERIAL ATTRIBUTES
-============================================================ */
-
-async function loadMaterialAttributes(
-  supabase,
-  materialIds
+function getProductFamily(
+  material,
+  detail
 ) {
-  if (!materialIds.length) {
-    return {};
-  }
-
-  const attributesByMaterialId = {};
-  const chunkSize = 500;
-
-  for (
-    let index = 0;
-    index < materialIds.length;
-    index += chunkSize
-  ) {
-    const chunk = materialIds.slice(
-      index,
-      index + chunkSize
+  const text =
+    normalizeText(
+      buildMaterialText(
+        material,
+        detail
+      )
     );
 
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("material_attributes")
-      .select(
-        [
-          "material_id",
-          "material_family",
-          "dimensions",
-          "material_grade",
-          "pressure_rating",
-          "temperature_rating",
-          "standards",
-          "manufacturer",
-          "model",
-          "design_features",
-          "other_attributes",
-        ].join(",")
-      )
-      .in("material_id", chunk);
+  const families = [
+    {
+      name: "steam_trap",
+      terms: [
+        "steam trap",
+        "thermostatic trap",
+        "thermodynamic trap",
+      ],
+    },
 
-    if (error) {
-      throw new Error(
-        `Failed to load material attributes: ${error.message}`
-      );
-    }
+    {
+      name: "gate_valve",
+      terms: [
+        "gate valve",
+      ],
+    },
 
-    for (const row of data || []) {
-      attributesByMaterialId[
-        row.material_id
-      ] = row;
+    {
+      name: "globe_valve",
+      terms: [
+        "globe valve",
+      ],
+    },
+
+    {
+      name: "ball_valve",
+      terms: [
+        "ball valve",
+      ],
+    },
+
+    {
+      name: "check_valve",
+      terms: [
+        "check valve",
+        "swing check",
+        "non return valve",
+      ],
+    },
+
+    {
+      name: "butterfly_valve",
+      terms: [
+        "butterfly valve",
+      ],
+    },
+
+    {
+      name: "pump",
+      terms: [
+        "pump",
+      ],
+    },
+
+    {
+      name: "compressor",
+      terms: [
+        "compressor",
+      ],
+    },
+
+    {
+      name: "mechanical_seal",
+      terms: [
+        "mechanical seal",
+      ],
+    },
+
+    {
+      name: "hose",
+      terms: [
+        "hose",
+        "flexible hose",
+      ],
+    },
+
+    {
+      name: "filter",
+      terms: [
+        "filter",
+      ],
+    },
+
+    {
+      name: "strainer",
+      terms: [
+        "strainer",
+      ],
+    },
+
+    {
+      name: "flange",
+      terms: [
+        "flange",
+      ],
+    },
+
+    {
+      name: "gasket",
+      terms: [
+        "gasket",
+      ],
+    },
+
+    {
+      name: "bearing",
+      terms: [
+        "bearing",
+      ],
+    },
+
+    {
+      name: "motor",
+      terms: [
+        "motor",
+      ],
+    },
+
+    {
+      name: "coupling",
+      terms: [
+        "coupling",
+      ],
+    },
+
+    {
+      name: "shaft",
+      terms: [
+        "shaft",
+        "journal shaft",
+      ],
+    },
+
+    {
+      name: "transformer",
+      terms: [
+        "transformer",
+      ],
+    },
+
+    {
+      name: "cable",
+      terms: [
+        "cable",
+      ],
+    },
+  ];
+
+  for (
+    const family of families
+  ) {
+    for (
+      const term of family.terms
+    ) {
+      if (
+        text.includes(term)
+      ) {
+        return family.name;
+      }
     }
   }
 
-  return attributesByMaterialId;
+  return null;
 }
 
 /* ============================================================
-   PRELIMINARY CANDIDATE SCORING
+   ENGINEERING RETRIEVAL SCORE
 ============================================================ */
 
-function calculatePreliminaryScore(
+function calculateEngineeringScore(
   source,
   sourceDetail,
   candidate,
@@ -426,26 +590,42 @@ function calculatePreliminaryScore(
       )
     );
 
-  const sourceFamily =
-    getMaterialFamily(
+  const familyTextScore =
+    tokenSimilarity(
+      getMaterialFamily(
+        source,
+        sourceDetail
+      ),
+      getMaterialFamily(
+        candidate,
+        candidateDetail
+      )
+    );
+
+  const sourceProductFamily =
+    getProductFamily(
       source,
       sourceDetail
     );
 
-  const candidateFamily =
-    getMaterialFamily(
+  const candidateProductFamily =
+    getProductFamily(
       candidate,
       candidateDetail
     );
 
-  const familyScore =
-    sourceFamily &&
-    candidateFamily
-      ? tokenSimilarity(
-          sourceFamily,
-          candidateFamily
-        )
-      : 0;
+  let productFamilyScore = 0;
+
+  if (
+    sourceProductFamily &&
+    candidateProductFamily
+  ) {
+    productFamilyScore =
+      sourceProductFamily ===
+      candidateProductFamily
+        ? 1
+        : 0;
+  }
 
   const gradeScore =
     tokenSimilarity(
@@ -477,18 +657,30 @@ function calculatePreliminaryScore(
       candidateDetail?.standards
     );
 
-  const score =
-    (
-      descriptionScore * 0.20 +
-      specificationScore * 0.20 +
-      fullTextScore * 0.15 +
-      familyScore * 0.15 +
-      gradeScore * 0.10 +
-      dimensionScore * 0.08 +
-      pressureScore * 0.05 +
-      temperatureScore * 0.03 +
-      standardScore * 0.04
-    ) * 100;
+  let score =
+    descriptionScore * 0.20 +
+    specificationScore * 0.20 +
+    fullTextScore * 0.10 +
+    familyTextScore * 0.10 +
+    productFamilyScore * 0.20 +
+    gradeScore * 0.05 +
+    dimensionScore * 0.05 +
+    pressureScore * 0.04 +
+    temperatureScore * 0.02 +
+    standardScore * 0.04;
+
+  /*
+   * Strongly penalize known product-family
+   * conflicts.
+   */
+  if (
+    sourceProductFamily &&
+    candidateProductFamily &&
+    sourceProductFamily !==
+      candidateProductFamily
+  ) {
+    score *= 0.20;
+  }
 
   return {
     descriptionScore:
@@ -515,7 +707,14 @@ function calculatePreliminaryScore(
     familyScore:
       Number(
         (
-          familyScore * 100
+          familyTextScore * 100
+        ).toFixed(1)
+      ),
+
+    productFamilyScore:
+      Number(
+        (
+          productFamilyScore * 100
         ).toFixed(1)
       ),
 
@@ -554,25 +753,487 @@ function calculatePreliminaryScore(
         ).toFixed(1)
       ),
 
-    preliminaryScore:
-      Number(score.toFixed(2)),
+    engineeringScore:
+      Number(
+        (
+          score * 100
+        ).toFixed(2)
+      ),
+
+    sourceProductFamily,
+    candidateProductFamily,
   };
 }
 
 /* ============================================================
-   SELECT BEST CROSS-COMPANY CANDIDATES
+   LOAD ALL MATERIALS
 ============================================================ */
 
-function selectBestCandidatePerCompany(
+async function loadAllMaterials(
+  supabase
+) {
+  const pageSize = 1000;
+  let from = 0;
+  const all = [];
+
+  while (true) {
+    const to =
+      from +
+      pageSize -
+      1;
+
+    const {
+      data,
+      error,
+    } = await supabase
+      .from("materials")
+      .select(
+        "id, company, company_id, material_number, description, specifications, category"
+      )
+      .order(
+        "id",
+        {
+          ascending: true,
+        }
+      )
+      .range(
+        from,
+        to
+      );
+
+    if (error) {
+      throw new Error(
+        `Failed to load material catalog: ${error.message}`
+      );
+    }
+
+    const page =
+      data || [];
+
+    all.push(
+      ...page
+    );
+
+    if (
+      page.length <
+      pageSize
+    ) {
+      break;
+    }
+
+    from +=
+      pageSize;
+  }
+
+  return all;
+}
+
+/* ============================================================
+   LOAD MATERIAL ATTRIBUTES
+============================================================ */
+
+async function loadMaterialAttributes(
+  supabase,
+  materialIds
+) {
+  if (
+    !materialIds.length
+  ) {
+    return {};
+  }
+
+  const attributesByMaterialId =
+    {};
+
+  const chunkSize = 500;
+
+  for (
+    let index = 0;
+    index <
+    materialIds.length;
+    index +=
+      chunkSize
+  ) {
+    const chunk =
+      materialIds.slice(
+        index,
+        index +
+          chunkSize
+      );
+
+    /*
+     * These are the columns confirmed
+     * to exist in your material_attributes
+     * table.
+     */
+    const {
+      data,
+      error,
+    } = await supabase
+      .from(
+        "material_attributes"
+      )
+      .select(
+        [
+          "material_id",
+          "material_family",
+          "dimensions",
+          "material_grade",
+          "pressure_rating",
+          "temperature_rating",
+          "standards",
+          "manufacturer",
+          "model",
+          "design_features",
+          "other_attributes",
+        ].join(",")
+      )
+      .in(
+        "material_id",
+        chunk
+      );
+
+    if (error) {
+      throw new Error(
+        `Failed to load material attributes: ${error.message}`
+      );
+    }
+
+    for (
+      const row of
+        data || []
+    ) {
+      attributesByMaterialId[
+        row.material_id
+      ] = row;
+    }
+  }
+
+  return attributesByMaterialId;
+}
+
+/* ============================================================
+   GENERATE EMBEDDING
+============================================================ */
+
+async function generateEmbedding(
+  text
+) {
+  const response =
+    await ai.models.embedContent({
+      model:
+        EMBEDDING_MODEL,
+
+      contents:
+        text,
+
+      config: {
+        outputDimensionality:
+          EMBEDDING_DIMENSIONS,
+      },
+    });
+
+  const values =
+    response?.embeddings?.[0]
+      ?.values;
+
+  if (
+    !Array.isArray(values) ||
+    values.length !==
+      EMBEDDING_DIMENSIONS
+  ) {
+    throw new Error(
+      `Invalid embedding returned. Expected ${EMBEDDING_DIMENSIONS} dimensions.`
+    );
+  }
+
+  return values;
+}
+
+/* ============================================================
+   GET OR CREATE SOURCE EMBEDDING
+============================================================ */
+
+async function getSourceEmbedding(
+  supabase,
+  source,
+  sourceDetail
+) {
+  const {
+    data: existing,
+    error:
+      existingError,
+  } = await supabase
+    .from(
+      "material_embeddings"
+    )
+    .select(
+      "material_id, embedding"
+    )
+    .eq(
+      "material_id",
+      source.id
+    )
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(
+      `Failed to load source embedding: ${existingError.message}`
+    );
+  }
+
+  if (
+    existing?.embedding
+  ) {
+    return {
+      embedding:
+        existing.embedding,
+
+      generatedNow:
+        false,
+    };
+  }
+
+  const engineeringText =
+    buildEngineeringText(
+      source,
+      sourceDetail
+    );
+
+  if (
+    !engineeringText.trim()
+  ) {
+    throw new Error(
+      "Source material has no technical information available for embedding."
+    );
+  }
+
+  console.log(
+    `Source material ${source.id} has no embedding. Generating one now...`
+  );
+
+  const embedding =
+    await generateEmbedding(
+      engineeringText
+    );
+
+  const {
+    error: saveError,
+  } = await supabase
+    .from(
+      "material_embeddings"
+    )
+    .upsert(
+      {
+        material_id:
+          source.id,
+
+        embedding,
+
+        search_text:
+          engineeringText,
+
+        updated_at:
+          new Date().toISOString(),
+      },
+      {
+        onConflict:
+          "material_id",
+      }
+    );
+
+  if (saveError) {
+    throw new Error(
+      `Failed to save source embedding: ${saveError.message}`
+    );
+  }
+
+  return {
+    embedding,
+
+    generatedNow:
+      true,
+  };
+}
+
+/* ============================================================
+   VECTOR RETRIEVAL
+============================================================ */
+
+async function vectorRetrieve(
+  supabase,
+  embedding
+) {
+  const {
+    data,
+    error,
+  } = await supabase.rpc(
+    "match_material_embeddings",
+    {
+      query_embedding:
+        embedding,
+
+      match_count:
+        VECTOR_RETRIEVAL_COUNT,
+    }
+  );
+
+  if (error) {
+    throw new Error(
+      `Vector retrieval failed: ${error.message}`
+    );
+  }
+
+  return data || [];
+}
+
+/* ============================================================
+   ENRICH VECTOR CANDIDATES
+============================================================ */
+
+function enrichVectorCandidates(
+  vectorResults,
+  materialsById,
+  attributesById
+) {
+  return vectorResults
+    .map((row) => {
+      const materialId =
+        Number(
+          row.material_id
+        );
+
+      const material =
+        materialsById.get(
+          materialId
+        );
+
+      if (!material) {
+        return null;
+      }
+
+      return {
+        material,
+
+        detail:
+          attributesById[
+            materialId
+          ] || null,
+
+        semanticSimilarity:
+          Number(
+            (
+              Number(
+                row.similarity
+              ) * 100
+            ).toFixed(2)
+          ),
+      };
+    })
+    .filter(Boolean);
+}
+
+/* ============================================================
+   HYBRID CANDIDATE SELECTION
+============================================================ */
+
+function selectHybridCandidates(
   source,
   sourceDetail,
-  materials,
-  attributesByMaterialId
+  allMaterials,
+  attributesById,
+  vectorCandidates
 ) {
-  const candidates = [];
+  const vectorById =
+    new Set();
 
-  for (const material of materials) {
-    if (material.id === source.id) {
+  for (
+    const candidate of
+      vectorCandidates
+  ) {
+    vectorById.add(
+      candidate.material.id
+    );
+  }
+
+  const combined = [];
+
+  /* ----------------------------------------------------------
+     VECTOR CANDIDATES
+  ---------------------------------------------------------- */
+
+  for (
+    const candidate of
+      vectorCandidates
+  ) {
+    if (
+      candidate.material.id ===
+      source.id
+    ) {
+      continue;
+    }
+
+    if (
+      normalizeCompany(
+        candidate.material.company
+      ) ===
+      normalizeCompany(
+        source.company
+      )
+    ) {
+      continue;
+    }
+
+    const engineering =
+      calculateEngineeringScore(
+        source,
+        sourceDetail,
+        candidate.material,
+        candidate.detail
+      );
+
+    const semantic =
+      candidate.semanticSimilarity /
+      100;
+
+    const engineeringScore =
+      engineering.engineeringScore /
+      100;
+
+    const hybridScore =
+      semantic * 0.70 +
+      engineeringScore *
+        0.30;
+
+    combined.push({
+      ...candidate,
+
+      ...engineering,
+
+      hybridScore:
+        Number(
+          (
+            hybridScore * 100
+          ).toFixed(2)
+        ),
+
+      retrievalSource:
+        "VECTOR",
+    });
+  }
+
+  /* ----------------------------------------------------------
+     LEXICAL FALLBACK
+  ---------------------------------------------------------- */
+
+  for (
+    const material of
+      allMaterials
+  ) {
+    if (
+      material.id ===
+      source.id
+    ) {
       continue;
     }
 
@@ -587,50 +1248,111 @@ function selectBestCandidatePerCompany(
       continue;
     }
 
+    if (
+      vectorById.has(
+        material.id
+      )
+    ) {
+      continue;
+    }
+
     const detail =
-      attributesByMaterialId[
+      attributesById[
         material.id
       ] || null;
 
-    const scores =
-      calculatePreliminaryScore(
+    const engineering =
+      calculateEngineeringScore(
         source,
         sourceDetail,
         material,
         detail
       );
 
-    candidates.push({
-      material,
-      detail,
-      ...scores,
-    });
-  }
-
-  candidates.sort(
-    (a, b) =>
-      b.preliminaryScore -
-      a.preliminaryScore
-  );
-
-  const selected = [];
-  const companiesSeen = new Set();
-
-  for (const candidate of candidates) {
-    const company =
-      normalizeCompany(
-        candidate.material.company
-      );
-
-    if (companiesSeen.has(company)) {
+    /*
+     * Only allow meaningful fallback
+     * candidates.
+     */
+    if (
+      engineering.engineeringScore <
+      8
+    ) {
       continue;
     }
 
-    companiesSeen.add(company);
+    combined.push({
+      material,
 
-    selected.push(candidate);
+      detail,
 
-    if (selected.length >= 30) {
+      semanticSimilarity:
+        0,
+
+      ...engineering,
+
+      hybridScore:
+        Number(
+          (
+            engineering.engineeringScore *
+            0.30
+          ).toFixed(2)
+        ),
+
+      retrievalSource:
+        "LEXICAL_FALLBACK",
+    });
+  }
+
+  combined.sort(
+    (a, b) =>
+      b.hybridScore -
+      a.hybridScore
+  );
+
+  /* ----------------------------------------------------------
+     COMPANY DIVERSITY
+  ---------------------------------------------------------- */
+
+  const companyCounts =
+    new Map();
+
+  const selected = [];
+
+  for (
+    const candidate of
+      combined
+  ) {
+    const company =
+      normalizeCompany(
+        candidate.material
+          .company
+      );
+
+    const current =
+      companyCounts.get(
+        company
+      ) || 0;
+
+    if (
+      current >=
+      MAX_CANDIDATES_PER_COMPANY
+    ) {
+      continue;
+    }
+
+    companyCounts.set(
+      company,
+      current + 1
+    );
+
+    selected.push(
+      candidate
+    );
+
+    if (
+      selected.length >=
+      FINAL_CANDIDATE_COUNT
+    ) {
       break;
     }
   }
@@ -648,28 +1370,43 @@ async function askAIToCompare(
   candidates
 ) {
   const sourcePayload = {
-    company: source.company,
+    company:
+      source.company,
+
     material_number:
       source.material_number,
-    description: source.description,
+
+    description:
+      source.description,
+
     specifications:
       source.specifications,
-    category: source.category,
+
+    category:
+      source.category,
+
     technical_attributes:
-      safeObject(sourceDetail),
+      safeObject(
+        sourceDetail
+      ),
   };
 
   const candidatePayload =
     candidates.map(
-      (candidate, index) => ({
+      (
+        candidate,
+        index
+      ) => ({
         candidate_number:
           index + 1,
 
         company:
-          candidate.material.company,
+          candidate.material
+            .company,
 
         material_id:
-          candidate.material.id,
+          candidate.material
+            .id,
 
         material_number:
           candidate.material
@@ -684,13 +1421,28 @@ async function askAIToCompare(
             .specifications,
 
         category:
-          candidate.material.category,
+          candidate.material
+            .category,
 
         technical_attributes:
-          safeObject(candidate.detail),
+          safeObject(
+            candidate.detail
+          ),
 
-        preliminary_score:
-          candidate.preliminaryScore,
+        semantic_similarity:
+          candidate.semanticSimilarity,
+
+        engineering_score:
+          candidate.engineeringScore,
+
+        hybrid_score:
+          candidate.hybridScore,
+
+        retrieval_source:
+          candidate.retrievalSource,
+
+        product_family:
+          candidate.candidateProductFamily,
       })
     );
 
@@ -699,13 +1451,15 @@ You are the engineering comparison engine
 for a Government of India National Unified
 Material Master system.
 
-Determine whether every supplied candidate
+Determine whether EVERY supplied candidate
 from another CPSE represents the same,
 duplicate, near-duplicate, or functionally
 equivalent engineering material as the source.
 
-The goal is to reconcile different SAP/ERP
-codes and descriptions between CPSEs.
+The retrieval layer has already ranked these
+candidates using semantic embeddings and
+engineering signals. You are the final technical
+verification layer.
 
 ==================================================
 CLASSIFICATIONS
@@ -716,12 +1470,12 @@ Same engineering item and relevant technical
 properties agree.
 
 DUPLICATE
-Same physical/engineering item but represented
+Same physical/engineering item represented
 with different CPSE material codes or descriptions.
 
 NEAR_DUPLICATE
-Very similar item with minor differences that
-require engineering review.
+Very similar material with minor differences
+requiring engineering review.
 
 FUNCTIONALLY_EQUIVALENT
 Different naming/coding but sufficient technical
@@ -732,49 +1486,56 @@ Insufficient evidence or important technical
 incompatibility.
 
 ==================================================
-ENGINEERING EVALUATION
+ENGINEERING RULES
 ==================================================
 
-Prioritize:
-
-- product/material type
-- material family
-- dimensions
-- material grade
-- pressure rating
-- temperature rating
-- standards
-- manufacturer
-- model
-- design features
-- application
-- detailed specifications
-
-Rules:
-
 1. Never compare the same CPSE.
+
 2. Product name similarity alone is insufficient.
-3. Different CPSE codes do not prove different identity.
-4. Missing technical data is NOT proof of equivalence.
-5. Never invent specifications.
-6. Critical conflicting parameters should prevent
-   IDENTICAL or DUPLICATE classification.
+
+3. Different CPSE codes do not prove different
+   engineering identity.
+
+4. Never invent specifications.
+
+5. Missing technical data is NOT proof of
+   equivalence.
+
+6. A major product-family conflict should normally
+   result in NO_MATCH.
+
 7. Different manufacturers can still be equivalent
-   when the engineering evidence supports it.
-8. Government approval is required before an NCS
-   becomes official.
-9. Do not generate an NCS code.
-10. Return an assessment for EVERY candidate.
-11. Even when the evidence is insufficient, return
-    the candidate with is_equivalent=false,
-    classification=NO_MATCH, and explain why.
-12. For candidates with strong product-family and
-    application similarity but incomplete technical
-    data, consider NEAR_DUPLICATE or
-    FUNCTIONALLY_EQUIVALENT only when there is
-    enough supporting evidence. Do not invent facts.
-13. Confidence must reflect the evidence actually
-    provided, not assumptions.
+   when engineering evidence supports it.
+
+8. Prioritize:
+   - product type
+   - material family
+   - dimensions
+   - nominal size
+   - material grade
+   - pressure rating
+   - temperature rating
+   - standards
+   - end connections when available
+   - application when available
+   - manufacturer
+   - model
+   - design features
+
+9. A steam trap should not be considered equivalent
+   to a hose, pump, check valve, mechanical seal,
+   shaft, or unrelated item just because the word
+   "steam" occurs in both records.
+
+10. Government approval is required before an NCS
+    becomes official.
+
+11. Do not generate an NCS code.
+
+12. Return an assessment for EVERY candidate.
+
+13. Confidence must reflect only the evidence
+    provided in the records.
 
 ==================================================
 SOURCE
@@ -902,7 +1663,9 @@ ${JSON.stringify(
 
   try {
     parsed =
-      JSON.parse(responseText);
+      JSON.parse(
+        responseText
+      );
   } catch {
     throw new Error(
       `Gemini returned invalid JSON using ${result.model}.`
@@ -939,7 +1702,9 @@ async function findExistingNCS(
     data,
     error,
   } = await supabase
-    .from("material_ncs_mapping")
+    .from(
+      "material_ncs_mapping"
+    )
     .select(
       "ncs_id, ai_confidence, match_status, verified"
     )
@@ -955,7 +1720,8 @@ async function findExistingNCS(
     .order(
       "verified",
       {
-        ascending: false,
+        ascending:
+          false,
       }
     )
     .limit(1);
@@ -982,7 +1748,9 @@ function makeNCSCode(
   sourceMaterialId
 ) {
   const normalized =
-    normalizeText(commonName)
+    normalizeText(
+      commonName
+    )
       .toUpperCase()
       .replace(
         /[^A-Z0-9]+/g,
@@ -995,12 +1763,15 @@ function makeNCSCode(
       .slice(0, 24);
 
   const suffix =
-    String(sourceMaterialId)
+    String(
+      sourceMaterialId
+    )
       .padStart(6, "0")
       .slice(-6);
 
   return `NCS-${
-    normalized || "MATERIAL"
+    normalized ||
+    "MATERIAL"
   }-${suffix}`;
 }
 
@@ -1025,7 +1796,9 @@ async function getOrCreateNCS(
       data,
       error,
     } = await supabase
-      .from("ncs_materials")
+      .from(
+        "ncs_materials"
+      )
       .select(
         "ncs_id, ncs_code, ncs_name, status"
       )
@@ -1052,14 +1825,19 @@ async function getOrCreateNCS(
 
   let attempt = 0;
 
-  while (attempt < 5) {
+  while (
+    attempt < 5
+  ) {
     const {
       data,
       error,
     } = await supabase
-      .from("ncs_materials")
+      .from(
+        "ncs_materials"
+      )
       .insert({
-        ncs_code: ncsCode,
+        ncs_code:
+          ncsCode,
 
         ncs_name:
           commonMaterialName ||
@@ -1077,14 +1855,18 @@ async function getOrCreateNCS(
           sourceMaterial.specifications ||
           null,
 
-        status: "PROPOSED",
+        status:
+          "PROPOSED",
       })
       .select(
         "ncs_id, ncs_code, ncs_name, status"
       )
       .single();
 
-    if (!error && data) {
+    if (
+      !error &&
+      data
+    ) {
       return data;
     }
 
@@ -1133,11 +1915,13 @@ async function saveMappings(
     match_status:
       "AI_PROPOSED",
 
-    verified: false,
+    verified:
+      false,
   });
 
   for (
-    const match of acceptedMatches
+    const match of
+      acceptedMatches
   ) {
     rows.push({
       material_id:
@@ -1155,7 +1939,8 @@ async function saveMappings(
       match_status:
         "AI_PROPOSED",
 
-      verified: false,
+      verified:
+        false,
     });
   }
 
@@ -1163,7 +1948,9 @@ async function saveMappings(
     data,
     error,
   } = await supabase
-    .from("material_ncs_mapping")
+    .from(
+      "material_ncs_mapping"
+    )
     .upsert(
       rows,
       {
@@ -1201,7 +1988,9 @@ async function ensureGovernmentReviewRequest(
     .from(
       "standardization_requests"
     )
-    .select("request_id")
+    .select(
+      "request_id"
+    )
     .eq(
       "ncs_id",
       ncs.ncs_id
@@ -1213,13 +2002,17 @@ async function ensureGovernmentReviewRequest(
     .limit(1)
     .maybeSingle();
 
-  if (requestLookupError) {
+  if (
+    requestLookupError
+  ) {
     throw new Error(
       `Failed to check standardization request: ${requestLookupError.message}`
     );
   }
 
-  if (existingRequest) {
+  if (
+    existingRequest
+  ) {
     return existingRequest;
   }
 
@@ -1267,7 +2060,9 @@ async function ensureGovernmentReviewRequest(
    MAIN POST
 ============================================================ */
 
-export async function POST(request) {
+export async function POST(
+  request
+) {
   try {
     /* --------------------------------------------------------
        ENVIRONMENT
@@ -1336,7 +2131,9 @@ export async function POST(request) {
       await request.json();
 
     const materialId =
-      Number(body.materialId);
+      Number(
+        body.materialId
+      );
 
     if (
       !Number.isInteger(
@@ -1357,7 +2154,7 @@ export async function POST(request) {
     }
 
     /* --------------------------------------------------------
-       SOURCE MATERIAL
+       SOURCE
     -------------------------------------------------------- */
 
     const {
@@ -1381,10 +2178,8 @@ export async function POST(request) {
       return NextResponse.json(
         {
           success: false,
-
           error:
             "Source material not found.",
-
           details:
             sourceError?.message ||
             null,
@@ -1396,7 +2191,7 @@ export async function POST(request) {
     }
 
     /* --------------------------------------------------------
-       LOAD CATALOG
+       LOAD MATERIALS
     -------------------------------------------------------- */
 
     const allMaterials =
@@ -1405,8 +2200,7 @@ export async function POST(request) {
       );
 
     if (
-      allMaterials.length ===
-      0
+      !allMaterials.length
     ) {
       return NextResponse.json({
         success: true,
@@ -1432,7 +2226,7 @@ export async function POST(request) {
     }
 
     /* --------------------------------------------------------
-       LOAD TECHNICAL ATTRIBUTES
+       LOAD ATTRIBUTES
     -------------------------------------------------------- */
 
     const materialIds =
@@ -1453,15 +2247,73 @@ export async function POST(request) {
       ] || null;
 
     /* --------------------------------------------------------
-       PRESELECT CROSS-COMPANY CANDIDATES
+       SOURCE EMBEDDING
+    -------------------------------------------------------- */
+
+    const {
+      embedding:
+        sourceEmbedding,
+      generatedNow:
+        embeddingGeneratedNow,
+    } =
+      await getSourceEmbedding(
+        supabase,
+        source,
+        sourceDetail
+      );
+
+    /* --------------------------------------------------------
+       VECTOR RETRIEVAL
+    -------------------------------------------------------- */
+
+    const vectorResults =
+      await vectorRetrieve(
+        supabase,
+        sourceEmbedding
+      );
+
+    console.log(
+      `Vector retrieval returned ${vectorResults.length} candidate(s) for material ${source.id}.`
+    );
+
+    /* --------------------------------------------------------
+       MATERIAL MAP
+    -------------------------------------------------------- */
+
+    const materialsById =
+      new Map(
+        allMaterials.map(
+          (material) => [
+            Number(
+              material.id
+            ),
+            material,
+          ]
+        )
+      );
+
+    /* --------------------------------------------------------
+       ENRICH VECTOR CANDIDATES
+    -------------------------------------------------------- */
+
+    const vectorCandidates =
+      enrichVectorCandidates(
+        vectorResults,
+        materialsById,
+        attributesByMaterialId
+      );
+
+    /* --------------------------------------------------------
+       HYBRID RANKING
     -------------------------------------------------------- */
 
     const preliminaryCandidates =
-      selectBestCandidatePerCompany(
+      selectHybridCandidates(
         source,
         sourceDetail,
         allMaterials,
-        attributesByMaterialId
+        attributesByMaterialId,
+        vectorCandidates
       );
 
     if (
@@ -1474,7 +2326,7 @@ export async function POST(request) {
         matched: false,
 
         message:
-          "No materials from other CPSEs were available for comparison.",
+          "No relevant cross-company material candidates were found by the ML retrieval layer.",
 
         data: {
           source_material_id:
@@ -1482,6 +2334,21 @@ export async function POST(request) {
 
           source_company:
             source.company,
+
+          source_material_code:
+            source.material_number,
+
+          source_description:
+            source.description,
+
+          embedding_model:
+            EMBEDDING_MODEL,
+
+          embedding_generated_now:
+            embeddingGeneratedNow,
+
+          vector_candidates_found:
+            vectorCandidates.length,
 
           candidates_considered:
             0,
@@ -1492,7 +2359,7 @@ export async function POST(request) {
     }
 
     /* --------------------------------------------------------
-       AI COMPARISON
+       GEMINI
     -------------------------------------------------------- */
 
     const aiResult =
@@ -1506,12 +2373,14 @@ export async function POST(request) {
        VALIDATE AI RESULTS
     -------------------------------------------------------- */
 
-    const acceptedMatches = [];
+    const acceptedMatches =
+      [];
 
     for (
-      const aiMatch of safeArray(
-        aiResult.matches
-      )
+      const aiMatch of
+        safeArray(
+          aiResult.matches
+        )
     ) {
       const candidateIndex =
         Number(
@@ -1592,7 +2461,7 @@ export async function POST(request) {
         Number(
           (
             confidence * 0.80 +
-            candidate.preliminaryScore *
+            candidate.hybridScore *
               0.20
           ).toFixed(1)
         );
@@ -1639,10 +2508,6 @@ export async function POST(request) {
       });
     }
 
-    /* --------------------------------------------------------
-       SORT
-    -------------------------------------------------------- */
-
     acceptedMatches.sort(
       (a, b) =>
         b.ai.confidence -
@@ -1661,94 +2526,111 @@ export async function POST(request) {
         safeArray(
           aiResult.matches
         )
-          .map((aiMatch) => {
-            const candidateIndex =
-              Number(
-                aiMatch.candidate_number
-              ) - 1;
-
-            const candidate =
-              preliminaryCandidates[
-                candidateIndex
-              ];
-
-            if (!candidate) {
-              return null;
-            }
-
-            return {
-              candidate_number:
+          .map(
+            (
+              aiMatch
+            ) => {
+              const candidateIndex =
                 Number(
                   aiMatch.candidate_number
-                ),
+                ) - 1;
 
-              material_id:
-                candidate.material.id,
+              const candidate =
+                preliminaryCandidates[
+                  candidateIndex
+                ];
 
-              company:
-                candidate.material
-                  .company,
+              if (!candidate) {
+                return null;
+              }
 
-              material_number:
-                candidate.material
-                  .material_number,
+              return {
+                candidate_number:
+                  Number(
+                    aiMatch.candidate_number
+                  ),
 
-              description:
-                candidate.material
-                  .description,
+                material_id:
+                  candidate.material
+                    .id,
 
-              specifications:
-                candidate.material
-                  .specifications,
+                company:
+                  candidate.material
+                    .company,
 
-              category:
-                candidate.material
-                  .category,
+                material_number:
+                  candidate.material
+                    .material_number,
 
-              preliminary_score:
-                candidate.preliminaryScore,
+                description:
+                  candidate.material
+                    .description,
 
-              ai_confidence:
-                numberOrZero(
-                  aiMatch.confidence
-                ),
+                specifications:
+                  candidate.material
+                    .specifications,
 
-              is_equivalent:
-                aiMatch.is_equivalent ===
-                true,
+                category:
+                  candidate.material
+                    .category,
 
-              classification:
-                String(
-                  aiMatch.classification ||
-                    ""
-                )
-                  .trim()
-                  .toUpperCase(),
+                semantic_similarity:
+                  candidate.semanticSimilarity,
 
-              matched_aspects:
-                safeArray(
-                  aiMatch.matched_aspects
-                ),
+                engineering_score:
+                  candidate.engineeringScore,
 
-              differences:
-                safeArray(
-                  aiMatch.differences
-                ),
+                hybrid_score:
+                  candidate.hybridScore,
 
-              critical_conflicts:
-                safeArray(
-                  aiMatch.critical_conflicts
-                ),
+                retrieval_source:
+                  candidate.retrievalSource,
 
-              reason:
-                aiMatch.reason ||
-                "No reason returned by AI.",
+                product_family:
+                  candidate.candidateProductFamily,
 
-              common_material_name:
-                aiMatch.common_material_name ||
-                null,
-            };
-          })
+                ai_confidence:
+                  numberOrZero(
+                    aiMatch.confidence
+                  ),
+
+                is_equivalent:
+                  aiMatch.is_equivalent ===
+                  true,
+
+                classification:
+                  String(
+                    aiMatch.classification ||
+                      ""
+                  )
+                    .trim()
+                    .toUpperCase(),
+
+                matched_aspects:
+                  safeArray(
+                    aiMatch.matched_aspects
+                  ),
+
+                differences:
+                  safeArray(
+                    aiMatch.differences
+                  ),
+
+                critical_conflicts:
+                  safeArray(
+                    aiMatch.critical_conflicts
+                  ),
+
+                reason:
+                  aiMatch.reason ||
+                  "No reason returned by AI.",
+
+                common_material_name:
+                  aiMatch.common_material_name ||
+                  null,
+              };
+            }
+          )
           .filter(Boolean)
           .sort(
             (a, b) =>
@@ -1757,9 +2639,11 @@ export async function POST(request) {
           );
 
       return NextResponse.json({
-        success: true,
+        success:
+          true,
 
-        matched: false,
+        matched:
+          false,
 
         message:
           `Gemini (${
@@ -1767,7 +2651,7 @@ export async function POST(request) {
             "configured model"
           }) evaluated ${
             preliminaryCandidates.length
-          } cross-company candidate(s) but did not identify a sufficiently strong technical equivalent.`,
+          } ML-retrieved candidate(s) but did not identify a sufficiently strong technical equivalent.`,
 
         data: {
           source_material_id:
@@ -1781,6 +2665,18 @@ export async function POST(request) {
 
           source_description:
             source.description,
+
+          embedding_model:
+            EMBEDDING_MODEL,
+
+          embedding_generated_now:
+            embeddingGeneratedNow,
+
+          retrieval_method:
+            "ML_VECTOR_PLUS_ENGINEERING_HYBRID",
+
+          vector_candidates_found:
+            vectorCandidates.length,
 
           candidates_considered:
             preliminaryCandidates.length,
@@ -1823,7 +2719,7 @@ export async function POST(request) {
       "Standard Material";
 
     /* --------------------------------------------------------
-       MATERIAL IDS
+       MATCHED IDS
     -------------------------------------------------------- */
 
     const matchedIds = [
@@ -1843,11 +2739,8 @@ export async function POST(request) {
     const ncs =
       await getOrCreateNCS(
         supabase,
-
         matchedIds,
-
         commonMaterialName,
-
         source
       );
 
@@ -1858,13 +2751,9 @@ export async function POST(request) {
     const savedMappings =
       await saveMappings(
         supabase,
-
         ncs,
-
         source,
-
         acceptedMatches[0],
-
         acceptedMatches
       );
 
@@ -1883,12 +2772,14 @@ export async function POST(request) {
     -------------------------------------------------------- */
 
     return NextResponse.json({
-      success: true,
+      success:
+        true,
 
-      matched: true,
+      matched:
+        true,
 
       message:
-        "Cross-company material equivalence identified and submitted for government review.",
+        "ML-retrieved cross-company material equivalence identified and submitted for government review.",
 
       data: {
         source_material_id:
@@ -1902,6 +2793,21 @@ export async function POST(request) {
 
         source_description:
           source.description,
+
+        embedding_model:
+          EMBEDDING_MODEL,
+
+        embedding_generated_now:
+          embeddingGeneratedNow,
+
+        retrieval_method:
+          "ML_VECTOR_PLUS_ENGINEERING_HYBRID",
+
+        vector_candidates_found:
+          vectorCandidates.length,
+
+        candidates_considered:
+          preliminaryCandidates.length,
 
         ncs_id:
           ncs.ncs_id,
@@ -1925,9 +2831,6 @@ export async function POST(request) {
         ai_model_used:
           aiResult.model ||
           null,
-
-        candidates_considered:
-          preliminaryCandidates.length,
 
         matches:
           acceptedMatches.map(
@@ -1961,12 +2864,29 @@ export async function POST(request) {
                   .material
                   .category,
 
-              preliminary_score:
+              semantic_similarity:
                 match.candidate
-                  .preliminaryScore,
+                  .semanticSimilarity,
+
+              engineering_score:
+                match.candidate
+                  .engineeringScore,
+
+              hybrid_score:
+                match.candidate
+                  .hybridScore,
+
+              retrieval_source:
+                match.candidate
+                  .retrievalSource,
+
+              product_family:
+                match.candidate
+                  .candidateProductFamily,
 
               confidence:
-                match.ai.confidence,
+                match.ai
+                  .confidence,
 
               raw_ai_confidence:
                 match.ai
@@ -2006,7 +2926,8 @@ export async function POST(request) {
 
     return NextResponse.json(
       {
-        success: false,
+        success:
+          false,
 
         error:
           "Failed to compare and standardize material.",
