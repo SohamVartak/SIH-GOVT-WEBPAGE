@@ -29,11 +29,16 @@ import {
   ChevronLeft,
   Globe2,
   BadgeCheck,
+  Crown,
 } from 'lucide-react';
 
 import { AnimatedButton } from '../ui/AnimatedButton';
 
-type PortalType = 'select' | 'user' | 'government';
+type PortalType =
+  | 'select'
+  | 'user'
+  | 'government'
+  | 'government-admin';
 
 type UserProfile = {
   user_id: string;
@@ -55,20 +60,28 @@ export const LoginView: React.FC = () => {
   const [portal, setPortal] =
     useState<PortalType>('select');
 
-  const isGovernment = portal === 'government';
+  const isGovernment =
+    portal === 'government';
+
+  const isGovernmentAdmin =
+    portal === 'government-admin';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] =
     useState('');
+
   const [showPassword, setShowPassword] =
     useState(false);
+
   const [rememberMe, setRememberMe] =
     useState(true);
 
   const [captchaCode, setCaptchaCode] =
     useState('7B8Y9K');
+
   const [captchaInput, setCaptchaInput] =
     useState('');
+
   const [
     isCaptchaSpinning,
     setIsCaptchaSpinning,
@@ -76,10 +89,16 @@ export const LoginView: React.FC = () => {
 
   const [isLoading, setIsLoading] =
     useState(false);
+
   const [isSuccess, setIsSuccess] =
     useState(false);
+
   const [errorMessage, setErrorMessage] =
     useState<string | null>(null);
+
+  /* =========================================================
+     CAPTCHA
+  ========================================================= */
 
   const generateNewCaptcha = () => {
     setIsCaptchaSpinning(true);
@@ -104,6 +123,10 @@ export const LoginView: React.FC = () => {
     }, 250);
   };
 
+  /* =========================================================
+     RESET
+  ========================================================= */
+
   const resetLogin = () => {
     setPortal('select');
     setEmail('');
@@ -115,6 +138,10 @@ export const LoginView: React.FC = () => {
     setShowPassword(false);
   };
 
+  /* =========================================================
+     OPEN USER PORTAL
+  ========================================================= */
+
   const openUserPortal = () => {
     setPortal('user');
     setEmail('');
@@ -124,6 +151,10 @@ export const LoginView: React.FC = () => {
     setIsSuccess(false);
   };
 
+  /* =========================================================
+     OPEN GOVERNMENT PORTAL
+  ========================================================= */
+
   const openGovernmentPortal = () => {
     setPortal('government');
     setEmail('');
@@ -132,6 +163,23 @@ export const LoginView: React.FC = () => {
     setErrorMessage(null);
     setIsSuccess(false);
   };
+
+  /* =========================================================
+     OPEN GOVERNMENT ADMINISTRATION
+  ========================================================= */
+
+  const openGovernmentAdminPortal = () => {
+    setPortal('government-admin');
+    setEmail('');
+    setPassword('');
+    setCaptchaInput('');
+    setErrorMessage(null);
+    setIsSuccess(false);
+  };
+
+  /* =========================================================
+     EMAIL VALIDATION
+  ========================================================= */
 
   const validateGovernmentEmail = (
     value: string
@@ -148,6 +196,10 @@ export const LoginView: React.FC = () => {
       value.trim()
     );
   };
+
+  /* =========================================================
+     LOAD USER PROFILE
+  ========================================================= */
 
   const loadUserProfile = async (): Promise<{
     success: boolean;
@@ -166,7 +218,8 @@ export const LoginView: React.FC = () => {
         }
       );
 
-      const result = await response.json();
+      const result =
+        await response.json();
 
       if (!response.ok) {
         return {
@@ -189,6 +242,7 @@ export const LoginView: React.FC = () => {
         success: true,
         profile: result.profile,
       };
+
     } catch (error) {
       console.error(
         'Profile API error:',
@@ -202,6 +256,10 @@ export const LoginView: React.FC = () => {
       };
     }
   };
+
+  /* =========================================================
+     LOGIN
+  ========================================================= */
 
   const handleSubmit = async (
     e: React.FormEvent
@@ -223,7 +281,14 @@ export const LoginView: React.FC = () => {
       return;
     }
 
-    if (isGovernment) {
+    /* -------------------------------------------------------
+       EMAIL VALIDATION
+    ------------------------------------------------------- */
+
+    if (
+      isGovernment ||
+      isGovernmentAdmin
+    ) {
       if (
         !validateGovernmentEmail(
           normalizedEmail
@@ -247,6 +312,10 @@ export const LoginView: React.FC = () => {
       }
     }
 
+    /* -------------------------------------------------------
+       CAPTCHA
+    ------------------------------------------------------- */
+
     if (
       captchaInput.trim().toUpperCase() !==
       captchaCode.toUpperCase()
@@ -263,11 +332,9 @@ export const LoginView: React.FC = () => {
     setIsLoading(true);
 
     try {
-      /*
-       * =====================================================
-       * 1. AUTHENTICATE WITH SUPABASE
-       * =====================================================
-       */
+      /* =====================================================
+         1. SUPABASE AUTHENTICATION
+      ===================================================== */
 
       const {
         data,
@@ -308,11 +375,9 @@ export const LoginView: React.FC = () => {
         return;
       }
 
-      /*
-       * =====================================================
-       * 2. LOAD REAL DATABASE PROFILE
-       * =====================================================
-       */
+      /* =====================================================
+         2. LOAD DATABASE PROFILE
+      ===================================================== */
 
       const profileResult =
         await loadUserProfile();
@@ -336,22 +401,40 @@ export const LoginView: React.FC = () => {
       const profile =
         profileResult.profile;
 
+      /* =====================================================
+         3. VERIFY SELECTED PORTAL
+      ===================================================== */
+
       /*
-       * =====================================================
-       * 3. VERIFY PORTAL TYPE
-       * =====================================================
+       * USER / COMPANY PORTAL
        */
 
-      if (isGovernment) {
-        /*
-         * Government portal:
-         *
-         * Must be:
-         * GOVERNMENT
-         * AND
-         * @gov.in
-         */
+      if (
+        portal === 'user'
+      ) {
+        if (
+          profile.user_type !==
+          'COMPANY'
+        ) {
+          await supabase.auth.signOut();
 
+          setErrorMessage(
+            'This account is registered for the Government Portal. Please use the Government Portal.'
+          );
+
+          setIsLoading(false);
+
+          return;
+        }
+      }
+
+      /*
+       * GOVERNMENT OFFICER PORTAL
+       */
+
+      if (
+        portal === 'government'
+      ) {
         if (
           profile.user_type !==
           'GOVERNMENT'
@@ -382,22 +465,67 @@ export const LoginView: React.FC = () => {
 
           return;
         }
-      } else {
+      }
+
+      /*
+       * GOVERNMENT ADMINISTRATION
+       */
+
+      if (
+        portal ===
+        'government-admin'
+      ) {
         /*
-         * User / Company portal:
-         *
-         * Must be:
-         * COMPANY
+         * Must be a Government account.
          */
 
         if (
           profile.user_type !==
-          'COMPANY'
+          'GOVERNMENT'
         ) {
           await supabase.auth.signOut();
 
           setErrorMessage(
-            'This account is registered for the Government Portal. Please use the Government Portal.'
+            'Government Administration requires a Government account.'
+          );
+
+          setIsLoading(false);
+
+          return;
+        }
+
+        /*
+         * Must use @gov.in.
+         */
+
+        if (
+          !validateGovernmentEmail(
+            profile.email
+          )
+        ) {
+          await supabase.auth.signOut();
+
+          setErrorMessage(
+            'Government Administration requires an official @gov.in email address.'
+          );
+
+          setIsLoading(false);
+
+          return;
+        }
+
+        /*
+         * Must be National Administrator.
+         */
+
+        if (
+          profile.role !==
+          'National Administrator'
+        ) {
+          await supabase.auth.signOut();
+
+          setErrorMessage(
+            'Government Administration access is restricted to National Administrators.'
           );
 
           setIsLoading(false);
@@ -406,13 +534,13 @@ export const LoginView: React.FC = () => {
         }
       }
 
-      /*
-       * =====================================================
-       * 4. VERIFY ACTIVE ACCOUNT
-       * =====================================================
-       */
+      /* =====================================================
+         4. ACTIVE ACCOUNT CHECK
+      ===================================================== */
 
-      if (!profile.is_active) {
+      if (
+        !profile.is_active
+      ) {
         await supabase.auth.signOut();
 
         setErrorMessage(
@@ -424,40 +552,48 @@ export const LoginView: React.FC = () => {
         return;
       }
 
-      /*
-       * =====================================================
-       * 5. APPLY REAL DATABASE ROLE
-       * =====================================================
-       *
-       * IMPORTANT:
-       * No hardcoded IOCL or Government role.
-       * The role now comes from user_profiles.role.
-       */
+      /* =====================================================
+         5. APPLY REAL DATABASE ROLE
+      ===================================================== */
 
       setCurrentUserRole(
         profile.role as any
       );
 
-      /*
-       * =====================================================
-       * 6. SUCCESS
-       * =====================================================
-       */
+      /* =====================================================
+         6. SUCCESS MESSAGE
+      ===================================================== */
 
       setIsLoading(false);
       setIsSuccess(true);
 
       addToast({
-        title: isGovernment
-          ? 'Government Authentication Successful'
-          : 'Authentication Successful',
+        title:
+          portal ===
+          'government-admin'
+            ? 'Government Administration Authentication Successful'
+            : isGovernment
+            ? 'Government Authentication Successful'
+            : 'Authentication Successful',
 
-        message: isGovernment
-          ? `Welcome ${profile.full_name}. Government portal access verified.`
-          : `Welcome ${profile.full_name}. ${profile.company_name ? `${profile.company_name} workspace access verified.` : 'Company workspace access verified.'}`,
+        message:
+          portal ===
+          'government-admin'
+            ? `Welcome ${profile.full_name}. National Administrator access verified.`
+            : isGovernment
+            ? `Welcome ${profile.full_name}. Government portal access verified.`
+            : `Welcome ${profile.full_name}. ${
+                profile.company_name
+                  ? `${profile.company_name} workspace access verified.`
+                  : 'Company workspace access verified.'
+              }`,
 
         type: 'success',
       });
+
+      /* =====================================================
+         7. ROUTE AFTER LOGIN
+      ===================================================== */
 
       window.setTimeout(() => {
         window.history.pushState(
@@ -466,7 +602,14 @@ export const LoginView: React.FC = () => {
           '/'
         );
 
-        setCurrentTab('dashboard');
+        if (
+          portal ===
+          'government-admin'
+        ) {
+          setCurrentTab('admin');
+        } else {
+          setCurrentTab('dashboard');
+        }
       }, 700);
 
     } catch (error: any) {
@@ -484,28 +627,52 @@ export const LoginView: React.FC = () => {
     }
   };
 
+  /* =========================================================
+     LABEL HELPERS
+  ========================================================= */
+
+  const getPortalTitle =
+    portal === 'government-admin'
+      ? 'Government Administration'
+      : portal === 'government'
+      ? 'Government Portal'
+      : 'User Portal';
+
   return (
     <div className="min-h-screen bg-[#f4f7fb] text-slate-900 flex flex-col overflow-hidden">
 
-      {/* TOP TRICOLOR STRIP */}
+      {/* =====================================================
+          TOP TRICOLOR STRIP
+      ===================================================== */}
+
       <div className="h-1.5 w-full flex shrink-0">
+
         <div className="flex-1 bg-[#FF9933]" />
+
         <div className="flex-1 bg-white border-y border-slate-200" />
+
         <div className="flex-1 bg-[#138808]" />
+
       </div>
 
-      {/* HEADER */}
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
+
       <header className="bg-[#001f3f] text-white border-b border-[#0b355d]">
+
         <div className="max-w-[1500px] mx-auto px-4 sm:px-6 lg:px-10 py-3 flex items-center justify-between gap-4">
 
           <div className="flex items-center gap-3 min-w-0">
 
             <div className="shrink-0">
+
               <AshokaEmblem
                 size={42}
                 color="#ffffff"
                 goldTone={true}
               />
+
             </div>
 
             <div className="min-w-0">
@@ -537,17 +704,23 @@ export const LoginView: React.FC = () => {
             }
             className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-600 bg-[#002b50] hover:bg-amber-500 hover:text-slate-950 transition-all text-xs font-bold shrink-0"
           >
+
             <Home className="w-3.5 h-3.5" />
 
             <span className="hidden sm:inline">
               Public Portal
             </span>
+
           </button>
 
         </div>
+
       </header>
 
-      {/* MAIN */}
+      {/* =====================================================
+          MAIN
+      ===================================================== */}
+
       <main className="flex-1 flex items-center justify-center px-4 py-8 sm:px-6 lg:px-8 relative">
 
         <div className="absolute top-0 left-0 w-96 h-96 bg-blue-100/50 rounded-full blur-3xl pointer-events-none" />
@@ -578,7 +751,10 @@ export const LoginView: React.FC = () => {
 
               <div className="grid grid-cols-1 lg:grid-cols-2">
 
-                {/* LEFT */}
+                {/* =================================================
+                    LEFT PANEL
+                ================================================= */}
+
                 <div className="bg-gradient-to-br from-[#002244] via-[#001b38] to-[#001226] text-white p-7 sm:p-10 lg:p-12">
 
                   <div className="flex items-center gap-4">
@@ -663,7 +839,10 @@ export const LoginView: React.FC = () => {
 
                 </div>
 
-                {/* RIGHT */}
+                {/* =================================================
+                    RIGHT PANEL
+                ================================================= */}
+
                 <div className="p-6 sm:p-8 lg:p-10 bg-[#fbfdff]">
 
                   <div className="mb-7">
@@ -677,14 +856,17 @@ export const LoginView: React.FC = () => {
                     </h3>
 
                     <p className="text-xs sm:text-sm text-slate-500 mt-2">
-                      Select the workspace that matches your organization.
+                      Select the workspace that matches your organization or access level.
                     </p>
 
                   </div>
 
                   <div className="space-y-4">
 
-                    {/* USER */}
+                    {/* =================================================
+                        USER / COMPANY PORTAL
+                    ================================================= */}
+
                     <motion.button
                       type="button"
                       whileHover={{
@@ -702,7 +884,9 @@ export const LoginView: React.FC = () => {
                       <div className="flex items-start gap-4">
 
                         <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-700 border border-blue-100 flex items-center justify-center shrink-0">
+
                           <Building2 className="w-6 h-6" />
+
                         </div>
 
                         <div className="flex-1 min-w-0">
@@ -743,7 +927,10 @@ export const LoginView: React.FC = () => {
 
                     </motion.button>
 
-                    {/* GOVERNMENT */}
+                    {/* =================================================
+                        GOVERNMENT OFFICER PORTAL
+                    ================================================= */}
+
                     <motion.button
                       type="button"
                       whileHover={{
@@ -761,7 +948,9 @@ export const LoginView: React.FC = () => {
                       <div className="flex items-start gap-4">
 
                         <div className="w-12 h-12 rounded-xl bg-[#002244] text-white border border-[#003b68] flex items-center justify-center shrink-0">
+
                           <Landmark className="w-6 h-6" />
+
                         </div>
 
                         <div className="flex-1 min-w-0">
@@ -802,7 +991,73 @@ export const LoginView: React.FC = () => {
 
                     </motion.button>
 
+                    {/* =================================================
+                        GOVERNMENT ADMINISTRATION
+                    ================================================= */}
+
+                    <motion.button
+                      type="button"
+                      whileHover={{
+                        y: -3,
+                      }}
+                      whileTap={{
+                        scale: 0.98,
+                      }}
+                      onClick={
+                        openGovernmentAdminPortal
+                      }
+                      className="w-full text-left rounded-2xl border border-indigo-200 bg-gradient-to-br from-white via-indigo-50/40 to-blue-50/50 hover:border-indigo-400 hover:shadow-xl transition-all p-5 group"
+                    >
+
+                      <div className="flex items-start gap-4">
+
+                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-700 to-blue-800 text-white border border-indigo-500 flex items-center justify-center shrink-0 shadow-sm">
+
+                          <Crown className="w-6 h-6" />
+
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+
+                          <div className="flex items-center justify-between gap-3">
+
+                            <h4 className="font-black text-base text-indigo-950">
+                              Government Administration
+                            </h4>
+
+                            <ArrowRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-700 group-hover:translate-x-1 transition-all" />
+
+                          </div>
+
+                          <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                            Administrative control center for National Administrators and authorized system managers.
+                          </p>
+
+                          <div className="flex items-center gap-2 mt-3 flex-wrap">
+
+                            <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
+                              NATIONAL ADMIN
+                            </span>
+
+                            <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-100">
+                              RBAC CONTROL
+                            </span>
+
+                            <span className="text-[9px] font-bold px-2 py-1 rounded-md bg-slate-50 text-slate-600 border border-slate-200">
+                              SYSTEM MANAGEMENT
+                            </span>
+
+                          </div>
+
+                        </div>
+
+                      </div>
+
+                    </motion.button>
+
                   </div>
+
+                  {/* SECURITY NOTICE */}
 
                   <div className="mt-7 p-4 rounded-xl bg-slate-50 border border-slate-200">
 
@@ -817,7 +1072,7 @@ export const LoginView: React.FC = () => {
                         </div>
 
                         <p className="text-[10px] text-slate-500 leading-relaxed mt-1">
-                          Government access is intended only for authorized officials. Access privileges are determined by the authenticated account and assigned role.
+                          Government Administration is restricted to verified Government accounts with the National Administrator role.
                         </p>
 
                       </div>
@@ -825,6 +1080,8 @@ export const LoginView: React.FC = () => {
                     </div>
 
                   </div>
+
+                  {/* LOGOS */}
 
                   <div className="mt-6 flex items-center justify-center gap-4 opacity-70">
 
@@ -869,10 +1126,15 @@ export const LoginView: React.FC = () => {
               className="grid grid-cols-1 lg:grid-cols-12 bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden"
             >
 
-              {/* LEFT PANEL */}
+              {/* =================================================
+                  LEFT LOGIN PANEL
+              ================================================= */}
+
               <div
                 className={`lg:col-span-5 text-white p-7 sm:p-9 flex flex-col justify-between relative overflow-hidden ${
-                  isGovernment
+                  isGovernmentAdmin
+                    ? 'bg-gradient-to-br from-indigo-900 via-[#18235c] to-[#080d2a]'
+                    : isGovernment
                     ? 'bg-gradient-to-br from-[#002244] via-[#001a38] to-[#001023]'
                     : 'bg-gradient-to-br from-[#0b3766] via-[#0b4b84] to-[#092f55]'
                 }`}
@@ -891,15 +1153,20 @@ export const LoginView: React.FC = () => {
                     }
                     className="flex items-center gap-2 text-xs font-bold text-slate-300 hover:text-white transition-colors"
                   >
+
                     <ChevronLeft className="w-4 h-4" />
+
                     Change Portal
+
                   </button>
 
                   <div className="mt-8 flex items-center gap-4">
 
                     <div className="w-14 h-14 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center">
 
-                      {isGovernment ? (
+                      {isGovernmentAdmin ? (
+                        <Crown className="w-7 h-7 text-indigo-300" />
+                      ) : isGovernment ? (
                         <Landmark className="w-7 h-7 text-amber-300" />
                       ) : (
                         <Building2 className="w-7 h-7 text-blue-200" />
@@ -910,15 +1177,17 @@ export const LoginView: React.FC = () => {
                     <div>
 
                       <div className="text-[10px] uppercase font-black tracking-[0.16em] text-amber-300">
-                        {isGovernment
+
+                        {isGovernmentAdmin
+                          ? 'National Administration'
+                          : isGovernment
                           ? 'Government Access'
                           : 'User / Company Access'}
+
                       </div>
 
                       <h2 className="text-2xl font-black mt-1">
-                        {isGovernment
-                          ? 'Government Portal'
-                          : 'User Portal'}
+                        {getPortalTitle}
                       </h2>
 
                     </div>
@@ -928,9 +1197,13 @@ export const LoginView: React.FC = () => {
                   <div className="mt-8">
 
                     <p className="text-sm text-slate-300 leading-relaxed">
-                      {isGovernment
+
+                      {isGovernmentAdmin
+                        ? 'The Government Administration workspace provides restricted control over authorized system users, access roles, governance functions and national platform administration.'
+                        : isGovernment
                         ? 'Authorized Government of India officials can access governance, standardization, review, audit, ERP migration and administrative functions.'
                         : 'Participating companies and users can access material search, technical datasheets, procurement intelligence and company workflows.'}
+
                     </p>
 
                   </div>
@@ -942,9 +1215,13 @@ export const LoginView: React.FC = () => {
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
 
                       <span className="text-xs text-slate-200">
-                        {isGovernment
+
+                        {isGovernmentAdmin
+                          ? 'National Administrator access'
+                          : isGovernment
                           ? 'Government role-based access'
                           : 'Company workspace access'}
+
                       </span>
 
                     </div>
@@ -971,7 +1248,8 @@ export const LoginView: React.FC = () => {
 
                   </div>
 
-                  {isGovernment && (
+                  {(isGovernment ||
+                    isGovernmentAdmin) && (
                     <div className="mt-8 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4">
 
                       <div className="flex items-center gap-2">
@@ -979,20 +1257,20 @@ export const LoginView: React.FC = () => {
                         <ShieldCheck className="w-4 h-4 text-amber-300" />
 
                         <span className="text-xs font-black text-amber-200">
-                          GOVERNMENT RESTRICTION
+
+                          {isGovernmentAdmin
+                            ? 'ADMINISTRATION RESTRICTION'
+                            : 'GOVERNMENT RESTRICTION'}
+
                         </span>
 
                       </div>
 
                       <p className="text-[10px] text-slate-300 leading-relaxed mt-2">
 
-                        Only verified official Government of India email addresses ending in
-
-                        <span className="font-black text-white">
-                          {' '}@gov.in
-                        </span>
-
-                        {' '}are accepted by this portal.
+                        {isGovernmentAdmin
+                          ? 'Only active Government accounts assigned the National Administrator role can enter this workspace.'
+                          : 'Only verified official Government of India email addresses ending in @gov.in are accepted by this portal.'}
 
                       </p>
 
@@ -1021,7 +1299,10 @@ export const LoginView: React.FC = () => {
 
               </div>
 
-              {/* RIGHT LOGIN */}
+              {/* =================================================
+                  RIGHT LOGIN FORM
+              ================================================= */}
+
               <div className="lg:col-span-7 p-6 sm:p-9 lg:p-11 bg-white">
 
                 <div className="max-w-xl mx-auto">
@@ -1034,29 +1315,39 @@ export const LoginView: React.FC = () => {
 
                         <div
                           className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border text-[10px] font-black uppercase tracking-wider ${
-                            isGovernment
+                            isGovernmentAdmin
+                              ? 'bg-indigo-50 text-indigo-900 border-indigo-200'
+                              : isGovernment
                               ? 'bg-amber-50 text-amber-900 border-amber-200'
                               : 'bg-blue-50 text-blue-800 border-blue-200'
                           }`}
                         >
 
-                          {isGovernment ? (
+                          {isGovernmentAdmin ? (
+                            <Crown className="w-3.5 h-3.5" />
+                          ) : isGovernment ? (
                             <Landmark className="w-3.5 h-3.5" />
                           ) : (
                             <UserRound className="w-3.5 h-3.5" />
                           )}
 
                           <span>
-                            {isGovernment
+
+                            {isGovernmentAdmin
+                              ? 'Government Administration Authentication'
+                              : isGovernment
                               ? 'Government Authentication'
                               : 'User / Company Authentication'}
+
                           </span>
 
                         </div>
 
                         <h3 className="text-2xl sm:text-3xl font-black text-[#002244] mt-3">
 
-                          {isGovernment
+                          {isGovernmentAdmin
+                            ? 'Government Administration Sign In'
+                            : isGovernment
                             ? 'Government Sign In'
                             : 'Sign In to Bharat Material Grid'}
 
@@ -1064,7 +1355,9 @@ export const LoginView: React.FC = () => {
 
                         <p className="text-xs sm:text-sm text-slate-500 mt-2 leading-relaxed">
 
-                          {isGovernment
+                          {isGovernmentAdmin
+                            ? 'Use the credentials of an authorized National Administrator to continue.'
+                            : isGovernment
                             ? 'Use your official Government of India credentials to continue.'
                             : 'Use your registered company or user credentials to continue.'}
 
@@ -1074,7 +1367,9 @@ export const LoginView: React.FC = () => {
 
                       <div className="hidden sm:flex w-14 h-14 rounded-2xl bg-slate-50 border border-slate-200 items-center justify-center">
 
-                        {isGovernment ? (
+                        {isGovernmentAdmin ? (
+                          <Crown className="w-7 h-7 text-indigo-700" />
+                        ) : isGovernment ? (
                           <AshokaEmblem
                             size={38}
                             color="#002244"
@@ -1091,6 +1386,7 @@ export const LoginView: React.FC = () => {
                   </div>
 
                   {/* ERROR */}
+
                   <AnimatePresence>
 
                     {errorMessage && (
@@ -1122,6 +1418,7 @@ export const LoginView: React.FC = () => {
                   </AnimatePresence>
 
                   {/* FORM */}
+
                   <form
                     onSubmit={
                       handleSubmit
@@ -1130,11 +1427,13 @@ export const LoginView: React.FC = () => {
                   >
 
                     {/* EMAIL */}
+
                     <div>
 
                       <label className="block text-xs font-black text-slate-800 mb-1.5">
 
-                        {isGovernment
+                        {isGovernment ||
+                        isGovernmentAdmin
                           ? 'Official Government Email'
                           : 'Company / User Email'}
 
@@ -1154,13 +1453,16 @@ export const LoginView: React.FC = () => {
                             )
                           }
                           placeholder={
-                            isGovernment
+                            isGovernment ||
+                            isGovernmentAdmin
                               ? 'officer@ministry.gov.in'
                               : 'user@company.com'
                           }
                           autoComplete="email"
                           className={`w-full pl-10 pr-4 py-3 rounded-xl border bg-slate-50 focus:bg-white outline-none transition-all text-sm ${
-                            isGovernment
+                            isGovernmentAdmin
+                              ? 'border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100'
+                              : isGovernment
                               ? 'border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-100'
                               : 'border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
                           }`}
@@ -1170,7 +1472,8 @@ export const LoginView: React.FC = () => {
 
                       <div className="mt-1.5 text-[10px] text-slate-400">
 
-                        {isGovernment
+                        {isGovernment ||
+                        isGovernmentAdmin
                           ? 'Accepted domain: @gov.in'
                           : 'Use the email registered with Bharat Material Grid'}
 
@@ -1179,6 +1482,7 @@ export const LoginView: React.FC = () => {
                     </div>
 
                     {/* PASSWORD */}
+
                     <div>
 
                       <div className="flex items-center justify-between mb-1.5">
@@ -1225,7 +1529,9 @@ export const LoginView: React.FC = () => {
                           placeholder="Enter your password"
                           autoComplete="current-password"
                           className={`w-full pl-10 pr-11 py-3 rounded-xl border bg-slate-50 focus:bg-white outline-none transition-all text-sm ${
-                            isGovernment
+                            isGovernmentAdmin
+                              ? 'border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100'
+                              : isGovernment
                               ? 'border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-100'
                               : 'border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
                           }`}
@@ -1260,6 +1566,7 @@ export const LoginView: React.FC = () => {
                     </div>
 
                     {/* CAPTCHA */}
+
                     <div>
 
                       <div className="flex items-center justify-between mb-1.5">
@@ -1329,6 +1636,7 @@ export const LoginView: React.FC = () => {
                     </div>
 
                     {/* REMEMBER */}
+
                     <div className="flex items-center justify-between gap-4">
 
                       <label className="flex items-center gap-2 cursor-pointer">
@@ -1363,6 +1671,7 @@ export const LoginView: React.FC = () => {
                     </div>
 
                     {/* SUBMIT */}
+
                     <div className="pt-1">
 
                       <AnimatedButton
@@ -1373,7 +1682,9 @@ export const LoginView: React.FC = () => {
                           isLoading
                         }
                         loadingText={
-                          isGovernment
+                          isGovernmentAdmin
+                            ? 'Verifying Administrator Credentials...'
+                            : isGovernment
                             ? 'Verifying Government Credentials...'
                             : 'Verifying Account...'
                         }
@@ -1381,12 +1692,16 @@ export const LoginView: React.FC = () => {
                           isSuccess
                         }
                         successText={
-                          isGovernment
+                          isGovernmentAdmin
+                            ? 'Administration Access Granted'
+                            : isGovernment
                             ? 'Government Access Granted'
                             : 'Access Granted'
                         }
                         className={`w-full py-3.5 text-sm font-black border shadow-sm ${
-                          isGovernment
+                          isGovernmentAdmin
+                            ? 'bg-gradient-to-r from-indigo-700 to-blue-800 hover:from-indigo-600 hover:to-blue-700 border-indigo-600'
+                            : isGovernment
                             ? 'bg-gradient-to-r from-[#002244] to-[#003d6b] hover:from-[#00305a] hover:to-[#00518a] border-[#00345e]'
                             : 'bg-gradient-to-r from-[#0756a0] to-[#0a6bc3] hover:from-[#064986] hover:to-[#095ba7] border-blue-600'
                         } text-white`}
@@ -1396,7 +1711,9 @@ export const LoginView: React.FC = () => {
                         iconPosition="right"
                       >
 
-                        {isGovernment
+                        {isGovernmentAdmin
+                          ? 'Sign In to Government Administration'
+                          : isGovernment
                           ? 'Sign In to Government Portal'
                           : 'Sign In to User Portal'}
 
@@ -1407,6 +1724,7 @@ export const LoginView: React.FC = () => {
                   </form>
 
                   {/* BACK */}
+
                   <div className="mt-6">
 
                     <button
@@ -1426,6 +1744,7 @@ export const LoginView: React.FC = () => {
                   </div>
 
                   {/* SECURITY */}
+
                   <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
 
                     <div className="flex items-start gap-2.5">
@@ -1439,7 +1758,7 @@ export const LoginView: React.FC = () => {
                         </div>
 
                         <p className="text-[10px] text-slate-500 leading-relaxed mt-1">
-                          Never share your password or verification code. Access permissions are determined by the authenticated account.
+                          Never share your password or verification code. Access permissions are determined by the authenticated account and assigned database role.
                         </p>
 
                       </div>
@@ -1449,6 +1768,7 @@ export const LoginView: React.FC = () => {
                   </div>
 
                   {/* FOOTER ROW */}
+
                   <div className="mt-7 pt-5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
 
                     <div className="flex items-center gap-1.5">
@@ -1475,11 +1795,17 @@ export const LoginView: React.FC = () => {
           )}
 
         </div>
+
       </main>
 
-      {/* FOOTER */}
+      {/* =====================================================
+          FOOTER
+      ===================================================== */}
+
       <footer className="bg-[#001730] text-slate-400 border-t border-slate-800 px-4 py-3 text-center text-[10px] sm:text-xs">
+
         Bharat Material Grid • Secure Digital Access Gateway • Government of India
+
       </footer>
 
     </div>

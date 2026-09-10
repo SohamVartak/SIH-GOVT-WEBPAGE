@@ -1,4 +1,6 @@
 import React, {
+  useCallback,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -19,58 +21,28 @@ import {
 
 import { motion } from "motion/react";
 
+import { supabase } from "../../../lib/supabase";
 import { useApp } from "../../context/AppContext";
 
 type DatabaseMaterial = {
   id: number;
   company: string | null;
-  material_number:
-    | string
-    | null;
-  description:
-    | string
-    | null;
-  specifications:
-    | string
-    | null;
-  category:
-    | string
-    | null;
+  material_number: string | null;
+  description: string | null;
+  specifications: string | null;
+  category: string | null;
 };
 
 type MatchResult = {
-  rank:
-    | number
-    | null;
-
-  material_id:
-    | number
-    | null;
-
-  company:
-    | string
-    | null;
-
-  material_number:
-    | string
-    | null;
-
-  description:
-    | string
-    | null;
-
-  category:
-    | string
-    | null;
-
-  similarity:
-    | number;
-
-  similarity_percent:
-    | number;
-
-  recommendation:
-    | string;
+  rank: number | null;
+  material_id: number | null;
+  company: string | null;
+  material_number: string | null;
+  description: string | null;
+  category: string | null;
+  similarity: number;
+  similarity_percent: number;
+  recommendation: string;
 };
 
 type SearchResponse = {
@@ -79,62 +51,32 @@ type SearchResponse = {
   mode?: string;
 
   query?: {
-    material_id:
-      | number
-      | null;
-
-    company:
-      | string
-      | null;
-
-    material_number:
-      | string
-      | null;
-
-    description:
-      | string
-      | null;
-
-    category:
-      | string
-      | null;
-
-    specifications:
-      | string
-      | null;
-
-    search_text:
-      | string
-      | null;
+    material_id: number | null;
+    company: string | null;
+    material_number: string | null;
+    description: string | null;
+    specifications: string | null;
+    category: string | null;
+    search_text: string | null;
   };
 
   embedding?: {
-    model:
-      | string;
-
-    dimensions:
-      | number;
-
-    generated:
-      | boolean;
+    model: string;
+    dimensions: number;
+    generated: boolean;
   };
 
   count?: number;
 
-  matches?:
-    | MatchResult[];
+  matches?: MatchResult[];
 
-  best_match_by_company?:
-    | MatchResult[];
+  best_match_by_company?: MatchResult[];
 
-  company_results?:
-    | MatchResult[];
+  company_results?: MatchResult[];
 
-  error?:
-    | string;
+  error?: string;
 
-  details?:
-    | string;
+  details?: string;
 };
 
 const TARGET_COMPANIES = [
@@ -145,7 +87,7 @@ const TARGET_COMPANIES = [
   "ONGC",
 ];
 
-function companyName(
+function normalizeCompany(
   value: string | null
 ) {
   return (
@@ -202,13 +144,30 @@ function recommendationClasses(
 
 export default function AIMatchCenterView() {
   const {
-    materials,
-    materialsLoading,
     addToast,
   } = useApp();
 
-  const databaseMaterials =
-    materials as unknown as DatabaseMaterial[];
+  /* =========================================================
+     LIVE DATABASE MATERIALS
+  ========================================================= */
+
+  const [materials, setMaterials] =
+    useState<DatabaseMaterial[]>(
+      []
+    );
+
+  const [materialsLoading, setMaterialsLoading] =
+    useState(true);
+
+  const [materialsError, setMaterialsError] =
+    useState("");
+
+  const [lastMaterialsRefresh, setLastMaterialsRefresh] =
+    useState<Date | null>(null);
+
+  /* =========================================================
+     SEARCH
+  ========================================================= */
 
   const [materialInput, setMaterialInput] =
     useState("");
@@ -223,7 +182,9 @@ export default function AIMatchCenterView() {
     useState("");
 
   const [selectedMaterialId, setSelectedMaterialId] =
-    useState<number | null>(null);
+    useState<number | null>(
+      null
+    );
 
   const [suggestionsOpen, setSuggestionsOpen] =
     useState(false);
@@ -232,24 +193,219 @@ export default function AIMatchCenterView() {
     useState(false);
 
   const [results, setResults] =
-    useState<SearchResponse | null>(null);
+    useState<SearchResponse | null>(
+      null
+    );
 
   const [errorMessage, setErrorMessage] =
     useState("");
 
+  /* =========================================================
+     LOAD MATERIALS DIRECTLY FROM SUPABASE
+     
+     This deliberately bypasses the one-time material snapshot
+     in AppContext so newly uploaded/processed materials appear
+     in the matcher.
+  ========================================================= */
+
+  const loadMaterials =
+    useCallback(
+      async (
+        showToast = false
+      ) => {
+        setMaterialsLoading(
+          true
+        );
+
+        setMaterialsError("");
+
+        try {
+          const {
+            data,
+            error,
+          } =
+            await supabase
+              .from(
+                "materials"
+              )
+              .select(
+                `
+                id,
+                company,
+                material_number,
+                description,
+                specifications,
+                category
+                `
+              )
+              .order(
+                "id",
+                {
+                  ascending:
+                    false,
+                }
+              )
+              .limit(
+                5000
+              );
+
+          if (error) {
+            throw error;
+          }
+
+          setMaterials(
+            (data ||
+              []) as DatabaseMaterial[]
+          );
+
+          setLastMaterialsRefresh(
+            new Date()
+          );
+
+          if (
+            showToast
+          ) {
+            addToast({
+              title:
+                "Material Index Refreshed",
+              message:
+                `${(
+                  data || []
+                ).length.toLocaleString()} live material records loaded from Supabase.`,
+              type:
+                "success",
+            });
+          }
+        } catch (
+          error
+        ) {
+          console.error(
+            "Failed to load live materials:",
+            error
+          );
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Unable to load materials from Supabase.";
+
+          setMaterialsError(
+            message
+          );
+
+          if (
+            showToast
+          ) {
+            addToast({
+              title:
+                "Material Index Refresh Failed",
+              message,
+              type:
+                "error",
+            });
+          }
+        } finally {
+          setMaterialsLoading(
+            false
+          );
+        }
+      },
+      [
+        addToast,
+      ]
+    );
+
+  /* =========================================================
+     INITIAL LOAD
+  ========================================================= */
+
+  useEffect(() => {
+    void loadMaterials();
+  }, [
+    loadMaterials,
+  ]);
+
+  /* =========================================================
+     REFRESH WHEN WINDOW GETS FOCUS
+     
+     Useful after uploading a datasheet in another view/tab.
+  ========================================================= */
+
+  useEffect(() => {
+    const handleFocus =
+      () => {
+        void loadMaterials();
+      };
+
+    window.addEventListener(
+      "focus",
+      handleFocus
+    );
+
+    return () => {
+      window.removeEventListener(
+        "focus",
+        handleFocus
+      );
+    };
+  }, [
+    loadMaterials,
+  ]);
+
+  /* =========================================================
+     REFRESH ON VISIBILITY CHANGE
+  ========================================================= */
+
+  useEffect(() => {
+    const handleVisibility =
+      () => {
+        if (
+          document.visibilityState ===
+          "visible"
+        ) {
+          void loadMaterials();
+        }
+      };
+
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibility
+    );
+
+    return () => {
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibility
+      );
+    };
+  }, [
+    loadMaterials,
+  ]);
+
+  /* =========================================================
+     SELECTED MATERIAL
+  ========================================================= */
+
   const selectedMaterial =
     useMemo(
       () =>
-        databaseMaterials.find(
-          (material) =>
+        materials.find(
+          (
+            material
+          ) =>
             material.id ===
             selectedMaterialId
-        ) || null,
+        ) ||
+        null,
       [
-        databaseMaterials,
+        materials,
         selectedMaterialId,
       ]
     );
+
+  /* =========================================================
+     AUTOCOMPLETE
+  ========================================================= */
 
   const suggestions =
     useMemo(() => {
@@ -258,38 +414,57 @@ export default function AIMatchCenterView() {
           .trim()
           .toLowerCase();
 
-      if (!query) {
-        return databaseMaterials
-          .slice(0, 8);
+      if (
+        !query
+      ) {
+        return materials.slice(
+          0,
+          10
+        );
       }
 
-      return databaseMaterials
+      return materials
         .filter(
-          (material) =>
+          (
+            material
+          ) =>
             String(
               material.material_number ||
                 ""
             )
               .toLowerCase()
-              .includes(query) ||
+              .includes(
+                query
+              ) ||
             String(
               material.description ||
                 ""
             )
               .toLowerCase()
-              .includes(query) ||
+              .includes(
+                query
+              ) ||
             String(
               material.company ||
                 ""
             )
               .toLowerCase()
-              .includes(query)
+              .includes(
+                query
+              )
         )
-        .slice(0, 8);
+        .slice(
+          0,
+          10
+        );
     }, [
-      databaseMaterials,
+      materials,
       materialInput,
     ]);
+
+  /* =========================================================
+     SELECT MATERIAL
+  ========================================================= */
 
   const selectMaterial =
     (
@@ -305,35 +480,37 @@ export default function AIMatchCenterView() {
           ""
       );
 
-      if (
-        !specificationInput.trim() &&
-        material.specifications
-      ) {
-        setSpecificationInput(
-          material.specifications
-        );
-      }
+      setCompanyInput(
+        material.company ||
+          ""
+      );
 
-      if (
-        !companyInput.trim() &&
-        material.company
-      ) {
-        setCompanyInput(
-          material.company
-        );
-      }
+      setCategoryInput(
+        material.category ||
+          ""
+      );
 
-      if (
-        !categoryInput.trim() &&
-        material.category
-      ) {
-        setCategoryInput(
-          material.category
-        );
-      }
+      setSpecificationInput(
+        material.specifications ||
+          ""
+      );
 
-      setSuggestionsOpen(false);
+      setSuggestionsOpen(
+        false
+      );
+
+      setResults(
+        null
+      );
+
+      setErrorMessage(
+        ""
+      );
     };
+
+  /* =========================================================
+     EXACT MATERIAL LOOKUP
+  ========================================================= */
 
   const findExactMaterial =
     () => {
@@ -342,39 +519,52 @@ export default function AIMatchCenterView() {
           .trim()
           .toLowerCase();
 
-      if (!query) {
+      if (
+        !query
+      ) {
         return null;
       }
 
       return (
-        databaseMaterials.find(
-          (material) =>
+        materials.find(
+          (
+            material
+          ) =>
             String(
               material.material_number ||
                 ""
             )
               .trim()
               .toLowerCase() ===
-              query
+            query
         ) ||
-        databaseMaterials.find(
-          (material) =>
+        materials.find(
+          (
+            material
+          ) =>
             String(
               material.description ||
                 ""
             )
               .trim()
               .toLowerCase() ===
-              query
+            query
         ) ||
         null
       );
     };
 
+  /* =========================================================
+     SEARCH
+  ========================================================= */
+
   const runSearch =
     async () => {
       setErrorMessage("");
-      setResults(null);
+
+      setResults(
+        null
+      );
 
       const exactMaterial =
         selectedMaterial ||
@@ -385,7 +575,7 @@ export default function AIMatchCenterView() {
           exactMaterial
         );
 
-      const hasQuery =
+      const hasDirectQuery =
         Boolean(
           materialInput.trim() ||
             specificationInput.trim() ||
@@ -395,10 +585,10 @@ export default function AIMatchCenterView() {
 
       if (
         !hasMaterial &&
-        !hasQuery
+        !hasDirectQuery
       ) {
         const message =
-          "Enter a material code, description, or specification first.";
+          "Enter a material code, description, or technical specification.";
 
         setErrorMessage(
           message
@@ -408,15 +598,47 @@ export default function AIMatchCenterView() {
           title:
             "Search Input Required",
           message,
-          type: "warning",
+          type:
+            "warning",
         });
 
         return;
       }
 
-      setIsSearching(true);
+      setIsSearching(
+        true
+      );
 
       try {
+        const requestBody =
+          hasMaterial
+            ? {
+                materialId:
+                  exactMaterial!.id,
+
+                matchCount:
+                  30,
+              }
+            : {
+                company:
+                  companyInput.trim(),
+
+                materialNumber:
+                  materialInput.trim(),
+
+                description:
+                  materialInput.trim(),
+
+                specifications:
+                  specificationInput.trim(),
+
+                category:
+                  categoryInput.trim(),
+
+                matchCount:
+                  30,
+              };
+
         const response =
           await fetch(
             "/api/semantic-search",
@@ -429,36 +651,10 @@ export default function AIMatchCenterView() {
                   "application/json",
               },
 
-              body: JSON.stringify(
-                hasMaterial
-                  ? {
-                      materialId:
-                        exactMaterial
-                          .id,
-
-                      matchCount:
-                        30,
-                    }
-                  : {
-                      company:
-                        companyInput.trim(),
-
-                      materialNumber:
-                        materialInput.trim(),
-
-                      description:
-                        materialInput.trim(),
-
-                      specifications:
-                        specificationInput.trim(),
-
-                      category:
-                        categoryInput.trim(),
-
-                      matchCount:
-                        30,
-                    }
-              ),
+              body:
+                JSON.stringify(
+                  requestBody
+                ),
             }
           );
 
@@ -483,15 +679,18 @@ export default function AIMatchCenterView() {
         addToast({
           title:
             "AI Match Complete",
+
           message:
             `${data.count || 0} semantic matches evaluated.`,
-          type: "success",
+
+          type:
+            "success",
         });
       } catch (
         error
       ) {
         console.error(
-          "AI matcher error:",
+          "Semantic search error:",
           error
         );
 
@@ -507,45 +706,98 @@ export default function AIMatchCenterView() {
         addToast({
           title:
             "AI Match Failed",
+
           message,
-          type: "error",
+
+          type:
+            "error",
         });
       } finally {
-        setIsSearching(false);
+        setIsSearching(
+          false
+        );
       }
     };
 
+  /* =========================================================
+     CLEAR
+  ========================================================= */
+
   const clearSearch =
     () => {
-      setMaterialInput("");
-      setSpecificationInput("");
-      setCompanyInput("");
-      setCategoryInput("");
+      setMaterialInput(
+        ""
+      );
+
+      setSpecificationInput(
+        ""
+      );
+
+      setCompanyInput(
+        ""
+      );
+
+      setCategoryInput(
+        ""
+      );
+
       setSelectedMaterialId(
         null
       );
-      setResults(null);
-      setErrorMessage("");
+
+      setResults(
+        null
+      );
+
+      setErrorMessage(
+        ""
+      );
+
       setSuggestionsOpen(
         false
       );
     };
 
+  /* =========================================================
+     SOURCE
+  ========================================================= */
+
   const source =
     results?.query;
+
+  /* =========================================================
+     COMPANY RESULTS
+  ========================================================= */
 
   const companyResults =
     results?.company_results ||
     TARGET_COMPANIES.map(
-      (company) => ({
-        rank: null,
-        material_id: null,
+      (
+        company
+      ) => ({
+        rank:
+          null,
+
+        material_id:
+          null,
+
         company,
-        material_number: null,
-        description: null,
-        category: null,
-        similarity: 0,
-        similarity_percent: 0,
+
+        material_number:
+          null,
+
+        description:
+          null,
+
+        category:
+          null,
+
+        similarity:
+          0,
+
+        similarity_percent:
+          0,
+
         recommendation:
           "NO_MATCH",
       })
@@ -554,17 +806,25 @@ export default function AIMatchCenterView() {
   return (
     <div className="min-h-full bg-[#f8fafc] px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-[1500px] space-y-6">
-        {/* =====================================================
+
+        {/* ===================================================
             HEADER
-        ===================================================== */}
+        =================================================== */}
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-[#002244] via-[#00315c] to-[#0f172a] text-white shadow-sm">
+
           <div className="border-b border-white/10 bg-black/10 px-6 py-5">
+
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
               <div>
+
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[10px] font-bold tracking-[0.18em] text-emerald-300">
+
                   <Sparkles className="h-3.5 w-3.5" />
+
                   LIVE AI ENGINE
+
                 </div>
 
                 <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
@@ -576,34 +836,57 @@ export default function AIMatchCenterView() {
                   engineering specifications using Gemini
                   embeddings and vector similarity.
                 </p>
+
               </div>
 
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-right">
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  DATABASE STATUS
+                  LIVE MATERIAL INDEX
                 </div>
 
-                <div className="mt-1 flex items-center justify-end gap-2 text-sm font-bold text-emerald-300">
-                  <Database className="h-4 w-4" />
+                <div className="mt-1 flex items-center gap-2 text-sm font-bold text-emerald-300">
+
+                  {materialsLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Database className="h-4 w-4" />
+                  )}
+
                   {materialsLoading
-                    ? "Loading..."
-                    : `${databaseMaterials.length.toLocaleString()} materials`}
+                    ? "Refreshing..."
+                    : `${materials.length.toLocaleString()} materials`}
                 </div>
+
+                {lastMaterialsRefresh && (
+                  <div className="mt-1 text-[9px] font-mono text-slate-500">
+                    Updated{" "}
+                    {lastMaterialsRefresh.toLocaleTimeString()}
+                  </div>
+                )}
+
               </div>
+
             </div>
+
           </div>
 
-          {/* ===================================================
-              SEARCH PANEL
-          =================================================== */}
+          {/* =================================================
+              SEARCH AREA
+          ================================================= */}
 
           <div className="grid gap-4 p-6 lg:grid-cols-12">
+
+            {/* MATERIAL */}
+
             <div className="lg:col-span-7">
+
               <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-300">
                 Material / Code / Description
               </label>
 
               <div className="relative">
+
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
                 <input
@@ -655,6 +938,7 @@ export default function AIMatchCenterView() {
                   suggestions.length >
                     0 && (
                     <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+
                       {suggestions.map(
                         (
                           material
@@ -676,11 +960,13 @@ export default function AIMatchCenterView() {
                             }
                             className="flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left last:border-b-0 hover:bg-slate-50"
                           >
+
                             <div className="mt-0.5 rounded-lg bg-slate-100 p-2">
                               <Building2 className="h-4 w-4 text-slate-600" />
                             </div>
 
                             <div className="min-w-0">
+
                               <div className="font-mono text-xs font-bold text-slate-900">
                                 {material.material_number ||
                                   `ID ${material.id}`}
@@ -692,30 +978,38 @@ export default function AIMatchCenterView() {
                               </div>
 
                               <div className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                                {companyName(
+                                {normalizeCompany(
                                   material.company
                                 )}
                               </div>
+
                             </div>
+
                           </button>
                         )
                       )}
+
                     </div>
                   )}
+
               </div>
 
               {selectedMaterial && (
                 <div className="mt-2 rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-200">
-                  Selected database record:
+                  Database record selected:
                   <span className="ml-1 font-mono font-bold">
                     {selectedMaterial.material_number ||
                       `ID ${selectedMaterial.id}`}
                   </span>
                 </div>
               )}
+
             </div>
 
+            {/* COMPANY */}
+
             <div className="lg:col-span-5">
+
               <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-300">
                 Company / CPSE
               </label>
@@ -732,12 +1026,16 @@ export default function AIMatchCenterView() {
                       .value
                   )
                 }
-                placeholder="Optional: IOCL, BPCL, HPCL..."
+                placeholder="Optional: IOCL, BPCL, HPCL, BHEL..."
                 className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3.5 text-sm text-white outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
               />
+
             </div>
 
+            {/* SPECIFICATION */}
+
             <div className="lg:col-span-12">
+
               <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-300">
                 Technical Specification
               </label>
@@ -755,12 +1053,16 @@ export default function AIMatchCenterView() {
                   )
                 }
                 rows={4}
-                placeholder="Enter size, pressure class, material grade, standard, end connection, dimensions, or any technical specification..."
+                placeholder="Size, pressure class, material grade, standard, end connection, dimensions, operating conditions..."
                 className="w-full resize-none rounded-xl border border-white/15 bg-white/10 px-4 py-3.5 text-sm leading-6 text-white outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
               />
+
             </div>
 
+            {/* CATEGORY */}
+
             <div className="lg:col-span-4">
+
               <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-300">
                 Category
               </label>
@@ -777,12 +1079,41 @@ export default function AIMatchCenterView() {
                       .value
                   )
                 }
-                placeholder="Optional: Valve, Pump, Bearing..."
+                placeholder="Valve, Pump, Bearing..."
                 className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3.5 text-sm text-white outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
               />
+
             </div>
 
+            {/* BUTTONS */}
+
             <div className="flex items-end gap-2 lg:col-span-8 lg:justify-end">
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadMaterials(
+                    true
+                  )
+                }
+                disabled={
+                  materialsLoading
+                }
+                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-xs font-bold text-slate-300 transition hover:bg-white/10 disabled:opacity-50"
+              >
+
+                <RefreshCw
+                  className={`h-4 w-4 ${
+                    materialsLoading
+                      ? "animate-spin"
+                      : ""
+                  }`}
+                />
+
+                Refresh Index
+
+              </button>
+
               <button
                 type="button"
                 onClick={
@@ -793,7 +1124,6 @@ export default function AIMatchCenterView() {
                 }
                 className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-xs font-bold text-slate-300 transition hover:bg-white/10"
               >
-                <RefreshCw className="h-4 w-4" />
                 Clear
               </button>
 
@@ -803,10 +1133,12 @@ export default function AIMatchCenterView() {
                   void runSearch()
                 }
                 disabled={
-                  isSearching
+                  isSearching ||
+                  materialsLoading
                 }
-                className="inline-flex min-w-[190px] items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-black text-slate-950 shadow-lg transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex min-w-[210px] items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-black text-slate-950 shadow-lg transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
+
                 {isSearching ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -819,39 +1151,50 @@ export default function AIMatchCenterView() {
                     <ArrowRight className="h-4 w-4" />
                   </>
                 )}
+
               </button>
+
             </div>
+
           </div>
+
         </section>
 
         {/* =====================================================
-            ERROR
+            MATERIAL DATABASE ERROR
         ===================================================== */}
 
-        {errorMessage && (
+        {materialsError && (
           <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
 
             <div>
+
               <div className="font-bold">
-                AI matching failed
+                Live material index could not be loaded
               </div>
 
               <div className="mt-1">
-                {errorMessage}
+                {materialsError}
               </div>
+
             </div>
+
           </div>
         )}
 
         {/* =====================================================
-            SOURCE
+            SOURCE MATERIAL
         ===================================================== */}
 
         {results?.query && (
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
               <div>
+
                 <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-600">
                   SOURCE MATERIAL
                 </div>
@@ -861,9 +1204,11 @@ export default function AIMatchCenterView() {
                     results.query.description ||
                     "Direct specification query"}
                 </h2>
+
               </div>
 
               <div className="flex flex-wrap gap-2">
+
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
                   {results.mode ===
                   "MATERIAL"
@@ -874,18 +1219,21 @@ export default function AIMatchCenterView() {
                 <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
                   Gemini Embeddings • 768D
                 </span>
+
               </div>
+
             </div>
 
             <div className="grid gap-3 md:grid-cols-4">
+
               <div className="rounded-xl bg-slate-50 p-4">
                 <div className="text-[10px] uppercase tracking-wider text-slate-400">
                   Company
                 </div>
+
                 <div className="mt-1 font-bold text-slate-900">
-                  {companyName(
-                    results.query
-                      .company
+                  {normalizeCompany(
+                    results.query.company
                   )}
                 </div>
               </div>
@@ -894,6 +1242,7 @@ export default function AIMatchCenterView() {
                 <div className="text-[10px] uppercase tracking-wider text-slate-400">
                   Category
                 </div>
+
                 <div className="mt-1 font-bold text-slate-900">
                   {results.query.category ||
                     "Not classified"}
@@ -904,6 +1253,7 @@ export default function AIMatchCenterView() {
                 <div className="text-[10px] uppercase tracking-wider text-slate-400">
                   Matches
                 </div>
+
                 <div className="mt-1 font-mono text-xl font-black text-slate-900">
                   {results.count ||
                     0}
@@ -914,16 +1264,19 @@ export default function AIMatchCenterView() {
                 <div className="text-[10px] uppercase tracking-wider text-slate-400">
                   AI Model
                 </div>
+
                 <div className="mt-1 font-bold text-slate-900">
                   {results.embedding
                     ?.model ||
                     "Gemini"}
                 </div>
               </div>
+
             </div>
 
             {results.query.description && (
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   Description
                 </div>
@@ -931,19 +1284,24 @@ export default function AIMatchCenterView() {
                 <p className="mt-1 text-sm leading-6 text-slate-700">
                   {results.query.description}
                 </p>
+
               </div>
             )}
+
           </section>
         )}
 
         {/* =====================================================
-            COMPANY BEST MATCHES
+            BEST MATCHES
         ===================================================== */}
 
         {results && (
           <section className="space-y-4">
+
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+
               <div>
+
                 <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-600">
                   SEMANTIC ENGINE RESULTS
                 </div>
@@ -953,22 +1311,26 @@ export default function AIMatchCenterView() {
                 </h2>
 
                 <p className="mt-1 text-xs text-slate-500">
-                  Highest semantic similarity found for
-                  each major CPSE.
+                  Best semantic result identified for each CPSE.
                 </p>
+
               </div>
 
               <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-mono font-bold text-slate-500 shadow-sm">
-                VECTOR SEARCH • COSINE SIMILARITY
+                GEMINI • 768D • PGVECTOR
               </div>
+
             </div>
 
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+
               {companyResults
                 .filter(
-                  (result) =>
+                  (
+                    result
+                  ) =>
                     TARGET_COMPANIES.includes(
-                      companyName(
+                      normalizeCompany(
                         result.company
                       )
                     )
@@ -978,6 +1340,7 @@ export default function AIMatchCenterView() {
                     result,
                     index
                   ) => {
+
                     const isNoMatch =
                       result.recommendation ===
                       "NO_MATCH";
@@ -985,7 +1348,10 @@ export default function AIMatchCenterView() {
                     return (
                       <motion.div
                         key={
-                          result.company ||
+                          normalizeCompany(
+                            result.company
+                          ) +
+                          "-" +
                           index
                         }
                         initial={{
@@ -1001,16 +1367,15 @@ export default function AIMatchCenterView() {
                             index *
                             0.04,
                         }}
-                        className={`rounded-2xl border bg-white p-5 shadow-sm transition ${
-                          isNoMatch
-                            ? "border-slate-200"
-                            : "border-slate-200 hover:-translate-y-0.5 hover:shadow-md"
-                        }`}
+                        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                       >
+
                         <div className="flex items-start justify-between gap-3">
+
                           <div className="flex min-w-0 items-center gap-3">
+
                             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-xs font-black text-white">
-                              {companyName(
+                              {normalizeCompany(
                                 result.company
                               ).slice(
                                 0,
@@ -1018,9 +1383,10 @@ export default function AIMatchCenterView() {
                               )}
                             </div>
 
-                            <div className="min-w-0">
+                            <div>
+
                               <div className="text-sm font-black text-slate-900">
-                                {companyName(
+                                {normalizeCompany(
                                   result.company
                                 )}
                               </div>
@@ -1028,7 +1394,9 @@ export default function AIMatchCenterView() {
                               <div className="text-[10px] uppercase tracking-wider text-slate-400">
                                 CPSE MATCH
                               </div>
+
                             </div>
+
                           </div>
 
                           {isNoMatch ? (
@@ -1036,23 +1404,28 @@ export default function AIMatchCenterView() {
                           ) : (
                             <CheckCircle2 className="h-5 w-5 text-emerald-500" />
                           )}
+
                         </div>
 
                         {isNoMatch ? (
                           <div className="mt-5 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-center">
+
                             <div className="text-sm font-bold text-slate-500">
                               No sufficiently close match
                             </div>
 
                             <div className="mt-1 text-[11px] text-slate-400">
-                              No result reached the current
-                              confidence threshold.
+                              The vector search did not return a
+                              sufficiently similar material.
                             </div>
+
                           </div>
                         ) : (
                           <>
                             <div className="mt-5 flex items-end justify-between">
+
                               <div>
+
                                 <div className="text-[10px] uppercase tracking-wider text-slate-400">
                                   Similarity
                                 </div>
@@ -1063,6 +1436,7 @@ export default function AIMatchCenterView() {
                                   }
                                   %
                                 </div>
+
                               </div>
 
                               <span
@@ -1074,9 +1448,11 @@ export default function AIMatchCenterView() {
                                   result.recommendation
                                 )}
                               </span>
+
                             </div>
 
                             <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+
                               <div
                                 className="h-full rounded-full bg-emerald-500 transition-all"
                                 style={{
@@ -1089,9 +1465,11 @@ export default function AIMatchCenterView() {
                                   )}%`,
                                 }}
                               />
+
                             </div>
 
                             <div className="mt-5 rounded-xl bg-slate-50 p-4">
+
                               <div className="font-mono text-xs font-black text-slate-900">
                                 {result.material_number ||
                                   `Material ID ${result.material_id}`}
@@ -1103,6 +1481,7 @@ export default function AIMatchCenterView() {
                               </div>
 
                               <div className="mt-3 flex flex-wrap gap-2">
+
                                 {result.category && (
                                   <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">
                                     {result.category}
@@ -1110,49 +1489,67 @@ export default function AIMatchCenterView() {
                                 )}
 
                                 <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[9px] font-mono font-bold text-slate-500">
-                                  ID {result.material_id}
+                                  ID{" "}
+                                  {
+                                    result.material_id
+                                  }
                                 </span>
+
                               </div>
+
                             </div>
                           </>
                         )}
+
                       </motion.div>
                     );
                   }
                 )}
+
             </div>
+
           </section>
         )}
 
         {/* =====================================================
-            ALL MATCHES
+            COMPLETE RESULT TABLE
         ===================================================== */}
 
-        {results &&
-          results.matches &&
+        {results?.matches &&
           results.matches.length >
             0 && (
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+
               <div className="border-b border-slate-200 px-5 py-4">
+
                 <div className="flex items-center gap-2">
+
                   <Cpu className="h-5 w-5 text-indigo-600" />
 
                   <div>
+
                     <h3 className="font-black text-slate-900">
                       Ranked Semantic Matches
                     </h3>
 
                     <p className="text-[11px] text-slate-500">
-                      Complete vector search result set.
+                      Complete vector-search result set.
                     </p>
+
                   </div>
+
                 </div>
+
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[850px] text-left">
+
+                <table className="w-full min-w-[900px] text-left">
+
                   <thead className="bg-slate-50">
+
                     <tr className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+
                       <th className="px-5 py-3">
                         Rank
                       </th>
@@ -1176,10 +1573,13 @@ export default function AIMatchCenterView() {
                       <th className="px-5 py-3">
                         Decision
                       </th>
+
                     </tr>
+
                   </thead>
 
                   <tbody className="divide-y divide-slate-100">
+
                     {results.matches.map(
                       (
                         match
@@ -1188,6 +1588,7 @@ export default function AIMatchCenterView() {
                           key={`${match.material_id}-${match.rank}`}
                           className="hover:bg-slate-50"
                         >
+
                           <td className="px-5 py-4 font-mono text-xs font-black text-slate-900">
                             #
                             {
@@ -1196,11 +1597,13 @@ export default function AIMatchCenterView() {
                           </td>
 
                           <td className="px-5 py-4">
+
                             <span className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-[10px] font-black text-white">
-                              {companyName(
+                              {normalizeCompany(
                                 match.company
                               )}
                             </span>
+
                           </td>
 
                           <td className="px-5 py-4 font-mono text-xs font-bold text-slate-800">
@@ -1214,20 +1617,24 @@ export default function AIMatchCenterView() {
                           </td>
 
                           <td className="px-5 py-4">
+
                             <div className="font-mono text-sm font-black text-emerald-600">
                               {
                                 match.similarity_percent
                               }
                               %
                             </div>
+
                           </td>
 
                           <td className="px-5 py-4">
+
                             <span
                               className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${recommendationClasses(
                                 match.recommendation
                               )}`}
                             >
+
                               {match.recommendation ===
                               "LIKELY_MATCH" ? (
                                 <CheckCircle2 className="h-3 w-3" />
@@ -1241,26 +1648,36 @@ export default function AIMatchCenterView() {
                               {recommendationLabel(
                                 match.recommendation
                               )}
+
                             </span>
+
                           </td>
+
                         </tr>
                       )
                     )}
+
                   </tbody>
+
                 </table>
+
               </div>
+
             </section>
           )}
 
         {/* =====================================================
-            EMPTY
+            EMPTY STATE
         ===================================================== */}
 
         {!results &&
           !isSearching && (
             <section className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
+
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50">
+
                 <Sparkles className="h-7 w-7 text-emerald-600" />
+
               </div>
 
               <h3 className="mt-4 text-lg font-black text-slate-900">
@@ -1268,13 +1685,14 @@ export default function AIMatchCenterView() {
               </h3>
 
               <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
-                Enter a material code, description, and/or
-                technical specification. The backend will create
-                a Gemini embedding and search the national
-                material vector index.
+                Enter a material code, description, or
+                engineering specification. The live database
+                will be searched using Gemini embeddings.
               </p>
+
             </section>
           )}
+
       </div>
     </div>
   );

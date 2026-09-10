@@ -1,13 +1,15 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'motion/react';
 import { useApp } from '../../context/AppContext';
-import { UserRole, TabType } from '../../types';
 import { supabase } from '../../../lib/supabase';
+import { UserRole, TabType } from '../../types';
 
 import {
   AshokaEmblem,
   DigitalIndiaLogo,
   MakeInIndiaLogo,
+  BMGPortalLogo,
+  BMGNationalSeal
 } from '../common/GovernmentLogos';
 
 import {
@@ -17,6 +19,7 @@ import {
   LogOut,
   ChevronDown,
   Globe,
+  FileText,
   Phone,
   Layers,
   Cpu,
@@ -29,85 +32,43 @@ import {
   Sparkles,
   UserRound,
   Mail,
-  ArrowRightLeft,
+  Landmark
 } from 'lucide-react';
 
 export const GovHeader: React.FC = () => {
   const {
     currentTab,
     setCurrentTab,
-
     currentUserRole,
     setCurrentUserRole,
-
     notifications,
-
     setIsNotificationsOpen,
     setIsCommandPaletteOpen,
     setIsAIAssistantOpen,
-
     startSIHDemo,
-
     reviews,
     candidates,
-
     language,
-    setLanguage,
-
-    companyOptions,
-    selectedCompany,
-    setSelectedCompany,
+    setLanguage
   } = useApp();
 
-  /* =========================================================
-     DROPDOWN STATES
-  ========================================================= */
+  const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
 
-  const [isRoleDropdownOpen, setIsRoleDropdownOpen] =
-    useState(false);
+  const [isGovernmentUser, setIsGovernmentUser] = useState(false);
 
-  const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] =
-    useState(false);
-
-  const [isProfileOpen, setIsProfileOpen] =
-    useState(false);
-
-  /* =========================================================
-     FONT SIZE
-  ========================================================= */
+  const [userName, setUserName] = useState('User');
+  const [userEmail, setUserEmail] = useState('');
 
   const [fontSize, setFontSize] =
     useState<'sm' | 'base' | 'lg'>('base');
 
-  /* =========================================================
-     USER
-  ========================================================= */
-
-  const [userName, setUserName] =
-    useState('User');
-
-  const [userEmail, setUserEmail] =
-    useState('');
-
-  /* =========================================================
-     NAVIGATION REF
-  ========================================================= */
-
-  const navContainerRef =
-    useRef<HTMLDivElement>(null);
-
-  /* =========================================================
-     NOTIFICATION COUNT
-  ========================================================= */
+  const navContainerRef = useRef<HTMLDivElement>(null);
 
   const unreadCount =
     notifications.filter(
       n => !n.read
     ).length;
-
-  /* =========================================================
-     REVIEW COUNT
-  ========================================================= */
 
   const pendingReviewsCount =
     reviews.filter(
@@ -116,10 +77,6 @@ export const GovHeader: React.FC = () => {
         r.status === 'High Priority'
     ).length;
 
-  /* =========================================================
-     AI MATCH COUNT
-  ========================================================= */
-
   const pendingMatchesCount =
     candidates.filter(
       c =>
@@ -127,63 +84,191 @@ export const GovHeader: React.FC = () => {
     ).length;
 
   /* =========================================================
-     GET CURRENT SUPABASE USER
+     LOAD AUTHENTICATED USER + GOVERNMENT PROFILE
   ========================================================= */
 
   useEffect(() => {
-    const getUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    let mounted = true;
 
-      if (user) {
+    const loadUser = async () => {
+      try {
+        const {
+          data,
+          error
+        } =
+          await supabase.auth.getUser();
+
+        if (
+          error ||
+          !data.user
+        ) {
+          if (mounted) {
+            setUserName('User');
+            setUserEmail('');
+            setIsGovernmentUser(false);
+          }
+
+          return;
+        }
+
+        const user = data.user;
+
         const fullName =
-          user.user_metadata?.full_name ||
-          user.user_metadata?.name ||
-          user.email?.split('@')[0] ||
-          'User';
+          user.user_metadata?.full_name;
 
-        setUserName(fullName);
+        if (mounted) {
+          setUserName(
+            fullName ||
+            user.email?.split('@')[0] ||
+            'User'
+          );
 
-        setUserEmail(
-          user.email || ''
+          setUserEmail(
+            user.email || ''
+          );
+        }
+
+        /* =====================================================
+           GET VERIFIED PROFILE FROM EXISTING AUTH API
+        ===================================================== */
+
+        try {
+          const response =
+            await fetch(
+              '/api/auth/profile',
+              {
+                method: 'GET',
+                cache: 'no-store'
+              }
+            );
+
+          if (!response.ok) {
+            if (mounted) {
+              setIsGovernmentUser(false);
+            }
+
+            return;
+          }
+
+          const result =
+            await response.json();
+
+          const profile =
+            result?.profile;
+
+          if (!profile) {
+            if (mounted) {
+              setIsGovernmentUser(false);
+            }
+
+            return;
+          }
+
+          const governmentUser =
+            profile.user_type === 'GOVERNMENT' &&
+            profile.is_active === true;
+
+          if (!mounted) {
+            return;
+          }
+
+          setIsGovernmentUser(
+            governmentUser
+          );
+
+          setUserName(
+            profile.full_name ||
+            fullName ||
+            user.email?.split('@')[0] ||
+            'User'
+          );
+
+          setUserEmail(
+            profile.email ||
+            user.email ||
+            ''
+          );
+
+          /*
+           * Keep browser session information synchronized
+           * with the authenticated database profile.
+           */
+          sessionStorage.setItem(
+            'bmg_user_type',
+            profile.user_type || ''
+          );
+
+          sessionStorage.setItem(
+            'bmg_user_role',
+            profile.role || ''
+          );
+
+          sessionStorage.setItem(
+            'bmg_company_name',
+            profile.company_name || ''
+          );
+
+          /*
+           * Safety guard:
+           * normal users cannot remain on the admin page.
+           */
+          if (
+            currentTab === 'admin' &&
+            !governmentUser
+          ) {
+            setCurrentTab(
+              'dashboard'
+            );
+          }
+
+        } catch (profileError) {
+          console.error(
+            'Failed to load account profile:',
+            profileError
+          );
+
+          if (mounted) {
+            setIsGovernmentUser(false);
+          }
+        }
+
+      } catch (error) {
+        console.error(
+          'Authentication error:',
+          error
         );
+
+        if (mounted) {
+          setUserName('User');
+          setUserEmail('');
+          setIsGovernmentUser(false);
+        }
       }
     };
 
-    getUser();
+    void loadUser();
 
     const {
-      data: { subscription },
+      data: authListener
     } =
       supabase.auth.onAuthStateChange(
-        (_event, session) => {
-          if (session?.user) {
-            const fullName =
-              session.user.user_metadata?.full_name ||
-              session.user.user_metadata?.name ||
-              session.user.email?.split('@')[0] ||
-              'User';
-
-            setUserName(fullName);
-
-            setUserEmail(
-              session.user.email || ''
-            );
-          } else {
-            setUserName('User');
-            setUserEmail('');
-          }
+        () => {
+          void loadUser();
         }
       );
 
     return () => {
-      subscription.unsubscribe();
+      mounted = false;
+
+      authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, [
+    currentTab,
+    setCurrentTab
+  ]);
 
   /* =========================================================
-     ROLES
+     AVAILABLE ROLES
   ========================================================= */
 
   const roles: UserRole[] = [
@@ -193,11 +278,11 @@ export const GovHeader: React.FC = () => {
     'Material Master Officer',
     'Procurement Officer',
     'Auditor',
-    'Executive Management',
+    'Executive Management'
   ];
 
   /* =========================================================
-     FONT SIZE HANDLER
+     FONT SIZE
   ========================================================= */
 
   const handleFontSize = (
@@ -205,12 +290,18 @@ export const GovHeader: React.FC = () => {
   ) => {
     setFontSize(size);
 
-    if (size === 'sm') {
+    if (
+      size === 'sm'
+    ) {
       document.documentElement.style.fontSize =
         '14px';
-    } else if (size === 'lg') {
+
+    } else if (
+      size === 'lg'
+    ) {
       document.documentElement.style.fontSize =
         '18px';
+
     } else {
       document.documentElement.style.fontSize =
         '16px';
@@ -218,7 +309,7 @@ export const GovHeader: React.FC = () => {
   };
 
   /* =========================================================
-     NAVIGATION HANDLER
+     NAVIGATION
   ========================================================= */
 
   const handleNavClick = (
@@ -230,32 +321,8 @@ export const GovHeader: React.FC = () => {
     e.currentTarget.scrollIntoView({
       behavior: 'smooth',
       inline: 'center',
-      block: 'nearest',
+      block: 'nearest'
     });
-  };
-
-  /* =========================================================
-     COMPANY SELECTION
-  ========================================================= */
-
-  const handleCompanySelect = (
-    company: string
-  ) => {
-    setSelectedCompany(company);
-
-    setIsCompanyDropdownOpen(false);
-  };
-
-  /* =========================================================
-     LOGOUT
-  ========================================================= */
-
-  const handleLogout = async () => {
-    setIsProfileOpen(false);
-
-    await supabase.auth.signOut();
-
-    window.location.href = '/';
   };
 
   /* =========================================================
@@ -269,13 +336,14 @@ export const GovHeader: React.FC = () => {
     icon: React.ReactNode;
     badge?: number;
   }[] = [
+
     {
       id: 'home',
       label: 'Home',
       hindiLabel: 'मुख्य पृष्ठ',
       icon: (
         <Home className="w-3.5 h-3.5" />
-      ),
+      )
     },
 
     {
@@ -284,7 +352,7 @@ export const GovHeader: React.FC = () => {
       hindiLabel: 'कमांड सेंटर',
       icon: (
         <Cpu className="w-3.5 h-3.5" />
-      ),
+      )
     },
 
     {
@@ -293,7 +361,7 @@ export const GovHeader: React.FC = () => {
       hindiLabel: 'सामग्री सूची',
       icon: (
         <Layers className="w-3.5 h-3.5" />
-      ),
+      )
     },
 
     {
@@ -304,7 +372,7 @@ export const GovHeader: React.FC = () => {
         <Cpu className="w-3.5 h-3.5" />
       ),
       badge:
-        pendingMatchesCount,
+        pendingMatchesCount
     },
 
     {
@@ -315,16 +383,16 @@ export const GovHeader: React.FC = () => {
         <CheckSquare className="w-3.5 h-3.5" />
       ),
       badge:
-        pendingReviewsCount,
+        pendingReviewsCount
     },
 
     {
       id: 'procurement',
-      label: 'Part Search & Datasheets',
-      hindiLabel: 'पार्ट खोज एवं डेटाशीट',
+      label: 'Bulk Savings & Deals',
+      hindiLabel: 'थोक खरीद बचत',
       icon: (
-        <Search className="w-3.5 h-3.5" />
-      ),
+        <TrendingUp className="w-3.5 h-3.5" />
+      )
     },
 
     {
@@ -333,20 +401,7 @@ export const GovHeader: React.FC = () => {
       hindiLabel: 'सीपीएसई निर्देशिका',
       icon: (
         <Building className="w-3.5 h-3.5" />
-      ),
-    },
-
-    /* =======================================================
-       NEW: ERP / LEGACY MATERIAL MIGRATION
-    ======================================================= */
-
-    {
-      id: 'migration',
-      label: 'ERP Migration',
-      hindiLabel: 'ईआरपी माइग्रेशन',
-      icon: (
-        <ArrowRightLeft className="w-3.5 h-3.5" />
-      ),
+      )
     },
 
     {
@@ -355,7 +410,7 @@ export const GovHeader: React.FC = () => {
       hindiLabel: 'डेटा अपलोड',
       icon: (
         <UploadCloud className="w-3.5 h-3.5" />
-      ),
+      )
     },
 
     {
@@ -364,25 +419,47 @@ export const GovHeader: React.FC = () => {
       hindiLabel: 'ऑडिट रिकॉर्ड्स',
       icon: (
         <ShieldCheck className="w-3.5 h-3.5" />
-      ),
-    },
+      )
+    }
   ];
 
   /* =========================================================
-     UI
+     SIGN OUT
   ========================================================= */
+
+  const handleSignOut = async () => {
+    sessionStorage.removeItem(
+      'bmg_user_type'
+    );
+
+    sessionStorage.removeItem(
+      'bmg_user_role'
+    );
+
+    sessionStorage.removeItem(
+      'bmg_company_name'
+    );
+
+    await supabase.auth.signOut();
+
+    window.location.href = '/';
+  };
 
   return (
     <header className="w-full bg-white border-b border-slate-200 shadow-sm z-30 select-none">
 
       {/* =====================================================
-          1. INDIAN TRICOLOR RIBBON
+          1. TOP INDIAN TRICOLOR RIBBON
       ===================================================== */}
 
       <div className="h-1.5 w-full flex">
+
         <div className="flex-1 bg-[#FF9933]" />
+
         <div className="flex-1 bg-[#FFFFFF] border-y border-slate-100" />
+
         <div className="flex-1 bg-[#138808]" />
+
       </div>
 
       {/* =====================================================
@@ -390,8 +467,6 @@ export const GovHeader: React.FC = () => {
       ===================================================== */}
 
       <div className="bg-[#002244] text-white text-[11px] py-1.5 px-4 lg:px-8 flex flex-wrap items-center justify-between gap-2 border-b border-[#001833]">
-
-        {/* LEFT */}
 
         <div className="flex items-center gap-2 sm:gap-4 font-medium">
 
@@ -421,7 +496,9 @@ export const GovHeader: React.FC = () => {
 
         </div>
 
-        {/* RIGHT */}
+        {/* ===================================================
+            RIGHT TOP ACTIONS
+        =================================================== */}
 
         <div className="flex items-center flex-wrap gap-2.5 sm:gap-3 text-slate-300 ml-auto">
 
@@ -454,6 +531,7 @@ export const GovHeader: React.FC = () => {
                   ? 'text-amber-400 font-bold'
                   : ''
               }`}
+              title="Decrease text size"
             >
               A-
             </button>
@@ -467,6 +545,7 @@ export const GovHeader: React.FC = () => {
                   ? 'text-amber-400 font-bold'
                   : ''
               }`}
+              title="Default text size"
             >
               A
             </button>
@@ -480,6 +559,7 @@ export const GovHeader: React.FC = () => {
                   ? 'text-amber-400 font-bold'
                   : ''
               }`}
+              title="Increase text size"
             >
               A+
             </button>
@@ -501,6 +581,7 @@ export const GovHeader: React.FC = () => {
                   ? 'text-amber-300 font-bold bg-[#002f5e]'
                   : 'text-slate-300'
               }`}
+              title="English"
             >
 
               <span>
@@ -526,159 +607,77 @@ export const GovHeader: React.FC = () => {
                   ? 'text-amber-300 font-bold bg-[#002f5e]'
                   : 'text-slate-300'
               }`}
+              title="राजभाषा हिन्दी"
             >
               हिन्दी
             </button>
 
           </div>
 
-          <div className="h-4 w-px bg-slate-700 hidden sm:block" />
-
-          {/* =================================================
-              COMPANY SELECTOR
-          ================================================= */}
-
-          <div className="relative">
-
-            <motion.button
-              whileHover={{
-                scale: 1.03,
-              }}
-              whileTap={{
-                scale: 0.97,
-              }}
-              onClick={() =>
-                setIsCompanyDropdownOpen(
-                  prev => !prev
-                )
-              }
-              className="flex items-center gap-1.5 bg-[#001730] hover:bg-[#002f5e] border border-emerald-400/60 hover:border-emerald-400 px-2.5 py-1 rounded-md text-xs text-white transition-colors cursor-pointer shadow-xs"
-              title="Select company data"
-            >
-
-              <Building className="w-3.5 h-3.5 text-emerald-400" />
-
-              <div className="flex flex-col items-start leading-tight">
-
-                <span className="text-[8px] uppercase tracking-wider text-slate-400 font-bold">
-                  Company
-                </span>
-
-                <span className="font-extrabold text-emerald-300 text-[11px] tracking-wide max-w-32 truncate">
-                  {selectedCompany}
-                </span>
-
-              </div>
-
-              <ChevronDown
-                className={`w-3 h-3 text-slate-300 transition-transform ${
-                  isCompanyDropdownOpen
-                    ? 'rotate-180'
-                    : ''
-                }`}
-              />
-
-            </motion.button>
-
-            {isCompanyDropdownOpen && (
-
-              <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-300 rounded-xl shadow-2xl py-1.5 z-[80]">
-
-                <div className="px-3 py-2 border-b border-slate-100 bg-slate-50">
-
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    Material Database Scope
-                  </div>
-
-                  <div className="text-xs text-slate-800 font-semibold mt-0.5">
-                    Select company
-                  </div>
-
-                </div>
-
-                <div className="max-h-72 overflow-y-auto py-1">
-
-                  {companyOptions.length === 0 ? (
-
-                    <div className="px-3 py-4 text-center text-xs text-slate-500">
-                      No companies available
-                    </div>
-
-                  ) : (
-
-                    companyOptions.map(
-                      company => {
-
-                        const isSelected =
-                          selectedCompany ===
-                          company;
-
-                        return (
-                          <button
-                            key={company}
-                            onClick={() =>
-                              handleCompanySelect(
-                                company
-                              )
-                            }
-                            className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors cursor-pointer ${
-                              isSelected
-                                ? 'bg-emerald-50 text-emerald-900 font-bold'
-                                : 'text-slate-700 hover:bg-slate-50'
-                            }`}
-                          >
-
-                            <span className="flex items-center gap-2">
-
-                              {company ===
-                              'ALL COMPANIES' ? (
-
-                                <Layers className="w-3.5 h-3.5 text-blue-600" />
-
-                              ) : (
-
-                                <Building className="w-3.5 h-3.5 text-slate-400" />
-
-                              )}
-
-                              <span>
-                                {company}
-                              </span>
-
-                            </span>
-
-                            {isSelected && (
-                              <span className="w-2 h-2 rounded-full bg-emerald-600" />
-                            )}
-
-                          </button>
-                        );
-                      }
-                    )
-                  )}
-
-                </div>
-
-                <div className="border-t border-slate-100 px-3 py-2 bg-slate-50">
-
-                  <div className="text-[9px] text-slate-500 leading-relaxed">
-
-                    Company filters only change the displayed
-                    material records. Original database records
-                    remain unchanged.
-
-                  </div>
-
-                </div>
-
-              </div>
-            )}
-
-          </div>
-
           {/* DIVIDER */}
 
           <div className="h-4 w-px bg-slate-700 hidden sm:block" />
+
+          {/* =================================================
+              OFFICER LOGIN
+          ================================================= */}
+
+          <motion.button
+            whileHover={{
+              scale: 1.03
+            }}
+            whileTap={{
+              scale: 0.97
+            }}
+            onClick={() =>
+              setCurrentTab('login')
+            }
+            className="flex items-center gap-1.5 bg-[#001730] hover:bg-[#002f5e] border border-slate-600 px-2.5 py-1 rounded-md text-xs text-white transition-colors cursor-pointer"
+            title="Open Officer Login"
+          >
+
+            <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+
+            <span className="font-bold text-[11px]">
+              Officer Login
+            </span>
+
+          </motion.button>
+
+          {/* =================================================
+              GOVERNMENT ADMINISTRATION
+              
+              ONLY ACTIVE GOVERNMENT USERS SEE THIS
+          ================================================= */}
+
+          {isGovernmentUser && (
+            <motion.button
+              whileHover={{
+                scale: 1.03,
+                y: -1
+              }}
+              whileTap={{
+                scale: 0.97
+              }}
+              onClick={() =>
+                setCurrentTab('admin')
+              }
+              className={`flex items-center gap-1.5 border px-2.5 py-1 rounded-md text-xs text-white transition-all cursor-pointer shadow-sm ${
+                currentTab === 'admin'
+                  ? 'bg-indigo-500 border-indigo-300'
+                  : 'bg-indigo-600 hover:bg-indigo-500 border-indigo-400/70'
+              }`}
+              title="Government Administration"
+            >
+
+              <Landmark className="w-3.5 h-3.5 text-indigo-100" />
+
+              <span className="font-black text-[11px]">
+                Government Administration
+              </span>
+
+            </motion.button>
+          )}
 
           {/* =================================================
               ROLE SELECTOR
@@ -688,10 +687,10 @@ export const GovHeader: React.FC = () => {
 
             <motion.button
               whileHover={{
-                scale: 1.03,
+                scale: 1.03
               }}
               whileTap={{
-                scale: 0.97,
+                scale: 0.97
               }}
               onClick={() =>
                 setIsRoleDropdownOpen(
@@ -699,6 +698,7 @@ export const GovHeader: React.FC = () => {
                 )
               }
               className="flex items-center gap-1.5 bg-[#001730] hover:bg-[#002f5e] border border-amber-400/50 hover:border-amber-400 px-2.5 py-1 rounded-md text-xs text-white transition-colors cursor-pointer shadow-xs"
+              title="Change active officer role"
             >
 
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
@@ -720,8 +720,7 @@ export const GovHeader: React.FC = () => {
             </motion.button>
 
             {isRoleDropdownOpen && (
-
-              <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-300 rounded-xl shadow-2xl py-1.5 z-[80]">
+              <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-300 rounded-xl shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95">
 
                 <div className="px-3 py-2 border-b border-slate-100 bg-slate-50">
 
@@ -739,11 +738,11 @@ export const GovHeader: React.FC = () => {
 
                   {roles.map(
                     role => (
-
                       <button
-                        key={role}
+                        key={
+                          role
+                        }
                         onClick={() => {
-
                           setCurrentUserRole(
                             role
                           );
@@ -751,7 +750,6 @@ export const GovHeader: React.FC = () => {
                           setIsRoleDropdownOpen(
                             false
                           );
-
                         }}
                         className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors cursor-pointer ${
                           currentUserRole ===
@@ -767,20 +765,41 @@ export const GovHeader: React.FC = () => {
 
                         {currentUserRole ===
                           role && (
-
                           <span className="w-2 h-2 rounded-full bg-emerald-600" />
-
                         )}
 
                       </button>
-
                     )
                   )}
 
                 </div>
 
-              </div>
+                <div className="pt-1 mt-1 border-t border-slate-100 px-1">
 
+                  <button
+                    onClick={() => {
+                      setIsRoleDropdownOpen(
+                        false
+                      );
+
+                      setCurrentTab(
+                        'login'
+                      );
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-rose-700 hover:bg-rose-50 rounded-lg flex items-center gap-2 font-bold transition-colors cursor-pointer"
+                  >
+
+                    <LogOut className="w-3.5 h-3.5" />
+
+                    <span>
+                      Go to Officer Login Page
+                    </span>
+
+                  </button>
+
+                </div>
+
+              </div>
             )}
 
           </div>
@@ -790,14 +809,14 @@ export const GovHeader: React.FC = () => {
       </div>
 
       {/* =====================================================
-          3. MAIN TITLE BAR
+          3. MAIN EMBLEM & TITLE BAR
       ===================================================== */}
 
       <div className="py-3 px-4 lg:px-8 bg-gradient-to-r from-slate-50 via-white to-amber-50/30 border-b border-slate-200">
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
 
-          {/* TITLE */}
+          {/* GOVERNMENT EMBLEM + TITLE */}
 
           <div
             className="flex items-center gap-3.5 cursor-pointer group"
@@ -808,11 +827,11 @@ export const GovHeader: React.FC = () => {
 
             <motion.div
               whileHover={{
-                scale: 1.05,
+                scale: 1.05
               }}
               transition={{
                 type: 'spring',
-                stiffness: 350,
+                stiffness: 350
               }}
             >
 
@@ -845,19 +864,18 @@ export const GovHeader: React.FC = () => {
               </div>
 
               <p className="text-xs text-slate-600 font-medium leading-tight mt-1">
-                राष्ट्रीय सीपीएसई सामग्री मानकीकरण एवं समन्वय पोर्टल
-                (National CPSE Material Standardization & Harmonization)
+                राष्ट्रीय सीपीएसई सामग्री मानकीकरण एवं समन्वय पोर्टल (National CPSE Material Standardization & Harmonization)
               </p>
 
             </div>
 
           </div>
 
-          {/* RIGHT */}
+          {/* RIGHT ACTIONS */}
 
           <div className="flex items-center flex-wrap gap-2.5 sm:gap-3">
 
-            {/* BADGES */}
+            {/* NATIONAL BADGES */}
 
             <div className="hidden xl:flex items-center gap-3 pr-2 border-r border-slate-200">
 
@@ -871,19 +889,20 @@ export const GovHeader: React.FC = () => {
 
             </div>
 
-            {/* DEMO */}
+            {/* INTERACTIVE DEMO */}
 
             <motion.button
               whileHover={{
-                scale: 1.03,
+                scale: 1.03
               }}
               whileTap={{
-                scale: 0.97,
+                scale: 0.97
               }}
               onClick={
                 startSIHDemo
               }
               className="bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-bold text-xs px-3.5 py-2 rounded-lg shadow-xs border border-emerald-500 transition-all flex items-center gap-1.5 cursor-pointer"
+              title="Launch guided interactive platform demonstration"
             >
 
               <Play className="w-3.5 h-3.5 fill-white text-white" />
@@ -898,10 +917,10 @@ export const GovHeader: React.FC = () => {
 
             <motion.button
               whileHover={{
-                scale: 1.04,
+                scale: 1.04
               }}
               whileTap={{
-                scale: 0.96,
+                scale: 0.96
               }}
               onClick={() =>
                 setIsAIAssistantOpen(
@@ -909,6 +928,7 @@ export const GovHeader: React.FC = () => {
                 )
               }
               className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs px-3.5 py-2 rounded-lg border border-amber-400 shadow-xs transition-all flex items-center gap-1.5 cursor-pointer group"
+              title="Ask Bharat AI contextual reasoning & spec validation"
             >
 
               <Sparkles className="w-3.5 h-3.5 text-slate-950 fill-amber-300 group-hover:rotate-12 transition-transform" />
@@ -923,10 +943,10 @@ export const GovHeader: React.FC = () => {
 
             <motion.button
               whileHover={{
-                scale: 1.03,
+                scale: 1.03
               }}
               whileTap={{
-                scale: 0.97,
+                scale: 0.97
               }}
               onClick={() =>
                 setIsCommandPaletteOpen(
@@ -934,6 +954,7 @@ export const GovHeader: React.FC = () => {
                 )
               }
               className="bg-white hover:bg-slate-100 text-slate-700 font-semibold text-xs px-3 py-2 rounded-lg border border-slate-300 transition-colors flex items-center gap-2 cursor-pointer shadow-2xs group"
+              title="Search materials, specifications, and CPSEs"
             >
 
               <Search className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-800" />
@@ -952,10 +973,10 @@ export const GovHeader: React.FC = () => {
 
             <motion.button
               whileHover={{
-                scale: 1.05,
+                scale: 1.05
               }}
               whileTap={{
-                scale: 0.95,
+                scale: 0.95
               }}
               onClick={() =>
                 setIsNotificationsOpen(
@@ -963,98 +984,94 @@ export const GovHeader: React.FC = () => {
                 )
               }
               className="relative p-2 bg-white hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-300 transition-colors cursor-pointer shadow-2xs"
+              title="Official Circulars and Notifications"
             >
 
               <Bell className="w-4 h-4 text-slate-700" />
 
-              {unreadCount > 0 && (
+              {unreadCount >
+                0 && (
                 <span className="absolute -top-1 -right-1 min-w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center px-1 border border-white">
-                  {unreadCount}
+                  {
+                    unreadCount
+                  }
                 </span>
               )}
 
             </motion.button>
 
-            {/* =================================================
-                ACCOUNT
-            ================================================= */}
+            {/* PROFILE */}
 
             <div className="relative">
 
               <motion.button
                 whileHover={{
-                  scale: 1.03,
+                  scale: 1.03
                 }}
                 whileTap={{
-                  scale: 0.97,
+                  scale: 0.97
                 }}
                 onClick={() =>
                   setIsProfileOpen(
                     prev => !prev
                   )
                 }
-                className="flex items-center gap-2 bg-[#002a5c] hover:bg-[#001f44] text-white px-3 py-2 rounded-lg border border-slate-300 shadow-sm transition-all cursor-pointer"
+                className="flex items-center gap-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 px-3 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
+                title="View signed-in user details"
               >
 
-                <div className="w-7 h-7 rounded-full bg-amber-400 text-[#002a5c] flex items-center justify-center shrink-0">
+                <span className="w-7 h-7 rounded-full bg-[#002a5c] text-white flex items-center justify-center shrink-0">
 
-                  <UserRound className="w-4 h-4" />
+                  <UserRound className="w-3.5 h-3.5" />
 
-                </div>
+                </span>
 
-                <div className="hidden md:flex flex-col items-start leading-tight max-w-32">
+                <span className="hidden xl:flex flex-col items-start leading-tight">
 
-                  <span className="text-xs font-bold truncate w-full text-left">
+                  <span className="font-bold text-slate-800 max-w-28 truncate">
                     {userName}
                   </span>
 
-                  <span className="text-[9px] text-slate-300">
+                  <span className="text-[10px] text-slate-500">
                     My Account
                   </span>
 
-                </div>
+                </span>
 
-                <ChevronDown
-                  className={`w-3.5 h-3.5 transition-transform ${
-                    isProfileOpen
-                      ? 'rotate-180'
-                      : ''
-                  }`}
-                />
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
 
               </motion.button>
 
-              {/* ACCOUNT DROPDOWN */}
-
               {isProfileOpen && (
+                <div className="absolute right-0 mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-2xl p-3 z-50">
 
-                <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-4 z-[100]">
+                  <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
 
-                  <div className="flex items-center gap-3 pb-4 border-b border-slate-200">
+                    <div className="w-10 h-10 rounded-full bg-[#002a5c] text-white flex items-center justify-center shrink-0">
 
-                    <div className="w-12 h-12 rounded-full bg-[#002a5c] text-white flex items-center justify-center shrink-0">
-
-                      <UserRound className="w-6 h-6" />
+                      <UserRound className="w-5 h-5" />
 
                     </div>
 
                     <div className="min-w-0">
 
-                      <div className="text-base font-bold text-slate-900 truncate">
+                      <div className="text-sm font-bold text-slate-900 truncate">
                         {userName}
                       </div>
 
-                      <div className="text-xs text-emerald-700 font-semibold">
-                        Signed in
+                      <div className="text-[11px] text-emerald-700 font-semibold">
+                        {isGovernmentUser
+                          ? 'Verified Government Account'
+                          : 'Authenticated User'}
                       </div>
 
                     </div>
 
                   </div>
 
-                  <div className="py-4">
+                  <div className="py-3 space-y-2">
 
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start gap-2 text-xs text-slate-600">
 
                       <Mail className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
 
@@ -1064,7 +1081,7 @@ export const GovHeader: React.FC = () => {
                           Email
                         </div>
 
-                        <div className="mt-1 text-sm font-medium text-slate-800 break-all">
+                        <div className="font-medium text-slate-800 break-all">
                           {userEmail ||
                             'Not available'}
                         </div>
@@ -1076,20 +1093,23 @@ export const GovHeader: React.FC = () => {
                   </div>
 
                   <button
-                    onClick={
-                      handleLogout
-                    }
-                    className="w-full flex items-center justify-center gap-2 rounded-lg bg-rose-50 border border-rose-200 px-4 py-2.5 text-sm font-bold text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
+                    onClick={async () => {
+                      setIsProfileOpen(
+                        false
+                      );
+
+                      await handleSignOut();
+                    }}
+                    className="w-full border-t border-slate-100 pt-2 text-left px-1 py-1 text-xs font-semibold text-rose-700 hover:text-rose-800 cursor-pointer flex items-center gap-2"
                   >
 
-                    <LogOut className="w-4 h-4" />
+                    <LogOut className="w-3.5 h-3.5" />
 
-                    Logout
+                    Sign Out
 
                   </button>
 
                 </div>
-
               )}
 
             </div>
@@ -1101,7 +1121,7 @@ export const GovHeader: React.FC = () => {
       </div>
 
       {/* =====================================================
-          4. NAVIGATION
+          4. FULL WIDTH NAVIGATION
       ===================================================== */}
 
       <nav
@@ -1121,14 +1141,15 @@ export const GovHeader: React.FC = () => {
                 link.id;
 
               return (
-
                 <motion.button
-                  key={link.id}
+                  key={
+                    link.id
+                  }
                   whileHover={{
-                    y: -1,
+                    y: -1
                   }}
                   whileTap={{
-                    scale: 0.97,
+                    scale: 0.97
                   }}
                   onClick={e =>
                     handleNavClick(
@@ -1158,29 +1179,26 @@ export const GovHeader: React.FC = () => {
                     undefined &&
                     link.badge >
                       0 && (
-
-                    <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full shadow-2xs">
-                      {link.badge}
-                    </span>
-
-                  )}
+                      <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full shadow-2xs">
+                        {
+                          link.badge
+                        }
+                      </span>
+                    )}
 
                   {isActive && (
-
                     <motion.div
                       layoutId="activeNavTabIndicator"
                       className="absolute bottom-0 left-0 right-0 h-1 bg-amber-400 rounded-t-sm shadow-xs"
                       transition={{
                         type: 'spring',
                         stiffness: 500,
-                        damping: 35,
+                        damping: 35
                       }}
                     />
-
                   )}
 
                 </motion.button>
-
               );
             }
           )}
@@ -1190,7 +1208,7 @@ export const GovHeader: React.FC = () => {
       </nav>
 
       {/* =====================================================
-          5. CIRCULAR STRIP
+          5. BREAKING CIRCULARS
       ===================================================== */}
 
       <div className="bg-amber-50 border-b border-amber-200/80 px-4 lg:px-8 py-1.5 flex items-center gap-3 text-xs overflow-hidden">
@@ -1212,10 +1230,7 @@ export const GovHeader: React.FC = () => {
             <strong>
               Latest Directive (MoP&NG):
             </strong>{' '}
-
-            Mandatory CPSE Material Harmonization & Rate Contract Pooling
-            initiated across 8 central enterprises. Total projected
-            savings:{' '}
+            Mandatory CPSE Material Harmonization & Rate Contract Pooling initiated across 8 central enterprises. Total projected savings:{' '}
 
             <strong className="text-emerald-700">
               ₹342.8 Crore
@@ -1228,10 +1243,7 @@ export const GovHeader: React.FC = () => {
           </span>
 
           <span className="hidden lg:inline text-slate-600">
-
-            Next Technical Review Meeting: 15 Sept 2026 at Udyog Bhawan,
-            New Delhi.
-
+            Next Technical Review Meeting: 15 Sept 2026 at Udyog Bhawan, New Delhi.
           </span>
 
         </div>
@@ -1252,3 +1264,5 @@ export const GovHeader: React.FC = () => {
     </header>
   );
 };
+
+export default GovHeader;
