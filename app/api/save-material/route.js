@@ -3,159 +3,902 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
-export async function POST(request) {
+// ============================================================
+// SUPABASE
+// ============================================================
+
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url) {
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL is missing."
+    );
+  }
+
+  if (!key) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is missing."
+    );
+  }
+
+  return createClient(url, key);
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function clean(value) {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return null;
+  }
+
+  const text = String(value).trim();
+
+  return text.length > 0 ? text : null;
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function companyCode(company) {
+  return normalizeText(company)
+    .replace(/\s+/g, "-")
+    .toUpperCase();
+}
+
+function createFingerprint(data) {
+  const parts = [
+    data.material_name,
+    data.product_type,
+    data.description,
+    data.company_material_code,
+    data.material_family,
+    data.dimensions?.size_range,
+    data.dimensions?.nominal_size,
+    data.dimensions?.diameter,
+    data.dimensions?.length,
+    data.dimensions?.width,
+    data.dimensions?.height,
+    data.dimensions?.thickness,
+    data.dimensions?.face_to_face,
+    data.dimensions?.pressure_class,
+    JSON.stringify(data.materials || {}),
+    JSON.stringify(data.design_features || []),
+    JSON.stringify(data.standards || []),
+    data.pressure_rating,
+    data.temperature_rating,
+    JSON.stringify(data.end_connections || []),
+    data.testing_standard,
+    data.actuation,
+    data.manufacturer,
+    data.model,
+    data.part_number,
+    data.application,
+    data.unit_of_measure,
+    data.drawing_number,
+    data.revision,
+    data.datasheet_number,
+    data.design_code,
+    JSON.stringify(data.additional_attributes || {}),
+  ];
+
+  return normalizeText(
+    parts
+      .filter(
+        (value) =>
+          value !== null &&
+          value !== undefined &&
+          String(value).trim() !== ""
+      )
+      .join(" | ")
+  );
+}
+
+function stringify(value) {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
   try {
-    // ==========================================
-    // SUPABASE CONFIGURATION
-    // ==========================================
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
 
-    const supabaseUrl =
-      process.env.NEXT_PUBLIC_SUPABASE_URL;
+// ============================================================
+// BUILD MATERIAL DETAILS
+// ============================================================
 
-    const serviceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY;
+function buildMaterialDetails(data) {
+  return {
+    material_type:
+      clean(data.material_type) ||
+      clean(data.product_type),
 
-    if (!supabaseUrl) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "NEXT_PUBLIC_SUPABASE_URL is missing.",
-        },
-        { status: 500 }
-      );
-    }
+    material_family:
+      clean(data.material_family),
 
-    if (!serviceRoleKey) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "SUPABASE_SERVICE_ROLE_KEY is missing.",
-        },
-        { status: 500 }
-      );
-    }
+    dimensions:
+      stringify(data.dimensions),
 
-    const supabase = createClient(
-      supabaseUrl,
-      serviceRoleKey
+    material_grade:
+      clean(
+        data.materials?.primary_material
+      ) ||
+      clean(
+        data.materials?.grade
+      ) ||
+      clean(
+        data.materials?.body_material
+      ),
+
+    pressure_rating:
+      clean(data.pressure_rating),
+
+    temperature_rating:
+      clean(data.temperature_rating),
+
+    standard:
+      Array.isArray(data.standards)
+        ? data.standards.join(", ")
+        : clean(data.standards),
+
+    manufacturer:
+      clean(data.manufacturer),
+
+    model:
+      clean(data.model),
+
+    part_number:
+      clean(data.part_number),
+
+    design_features:
+      stringify(data.design_features),
+
+    application:
+      clean(data.application),
+
+    unit_of_measure:
+      clean(data.unit_of_measure),
+
+    raw_attributes: {
+      materials:
+        data.materials || {},
+
+      standards:
+        data.standards || [],
+
+      end_connections:
+        data.end_connections || [],
+
+      testing_standard:
+        data.testing_standard || null,
+
+      actuation:
+        data.actuation || null,
+
+      drawing_number:
+        data.drawing_number || null,
+
+      revision:
+        data.revision || null,
+
+      datasheet_number:
+        data.datasheet_number || null,
+
+      design_code:
+        data.design_code || null,
+
+      inspection_requirements:
+        data.inspection_requirements || [],
+
+      quality_requirements:
+        data.quality_requirements || [],
+
+      additional_attributes:
+        data.additional_attributes || {},
+    },
+  };
+}
+
+// ============================================================
+// GET EXISTING BMG INFORMATION
+// ============================================================
+
+async function getBMGInfo(
+  supabase,
+  material
+) {
+  if (!material?.bmg_id) {
+    return {
+      bmg_id: null,
+      bmg_code: null,
+      ncs_name: null,
+      bmg_status: null,
+    };
+  }
+
+  const {
+    data: bmg,
+    error,
+  } = await supabase
+    .from("bmg_materials")
+    .select(
+      `
+        bmg_id,
+        bmg_code,
+        ncs_name,
+        category,
+        subcategory,
+        ncs_standard_specification,
+        status
+      `
+    )
+    .eq(
+      "bmg_id",
+      material.bmg_id
+    )
+    .maybeSingle();
+
+  if (error) {
+    console.error(
+      "BMG lookup error:",
+      error
     );
 
-    // ==========================================
-    // READ MULTIPART FORM DATA
-    // ==========================================
+    return {
+      bmg_id: material.bmg_id,
+      bmg_code: null,
+      ncs_name: null,
+      bmg_status: null,
+    };
+  }
 
-    const formData = await request.formData();
+  if (!bmg) {
+    return {
+      bmg_id: material.bmg_id,
+      bmg_code: null,
+      ncs_name: null,
+      bmg_status: null,
+    };
+  }
 
-    const file = formData.get("file");
-    const company = formData.get("company");
-    const fileName = formData.get("fileName");
+  return {
+    bmg_id: bmg.bmg_id,
+    bmg_code: bmg.bmg_code,
+    ncs_name: bmg.ncs_name,
+    bmg_status: bmg.status,
+  };
+}
 
-    const structuredDataText =
-      formData.get("structuredData");
+// ============================================================
+// RETURN EXISTING PRODUCT
+// ============================================================
 
-    if (!file) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "No file received.",
-        },
-        { status: 400 }
-      );
-    }
+async function existingProductResponse(
+  supabase,
+  material,
+  reason
+) {
+  const bmg = await getBMGInfo(
+    supabase,
+    material
+  );
 
-    if (!company || !structuredDataText) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Company and structured data are required.",
-        },
-        { status: 400 }
-      );
-    }
+  return {
+    success: true,
 
-    let structuredData;
+    duplicate: true,
 
-    try {
-      structuredData =
-        JSON.parse(structuredDataText);
-    } catch (error) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Invalid structured data JSON.",
-        },
-        { status: 400 }
-      );
-    }
+    reason,
 
-    // ==========================================
-    // 1. FIND COMPANY
-    // ==========================================
+    message:
+      "This product already exists in the database.",
 
+    data: {
+      material_id:
+        material.id,
+
+      unique_product_code:
+        material.unique_product_code,
+
+      bmg_id:
+        bmg.bmg_id,
+
+      bmg_code:
+        bmg.bmg_code,
+
+      ncs_name:
+        bmg.ncs_name,
+
+      bmg_status:
+        bmg.bmg_status,
+
+      company:
+        material.company,
+
+      company_material_code:
+        material.material_number,
+
+      material_name:
+        material.description,
+
+      description:
+        material.description,
+
+      specifications:
+        material.specifications,
+
+      category:
+        material.category,
+
+      duplicate_reason:
+        reason,
+    },
+  };
+}
+
+// ============================================================
+// FIND COMPANY
+// ============================================================
+
+async function getOrCreateCompany(
+  supabase,
+  companyName
+) {
+  const normalizedCompany =
+    clean(companyName);
+
+  if (!normalizedCompany) {
+    throw new Error(
+      "AI did not provide a company name."
+    );
+  }
+
+  const {
+    data: existingCompany,
+    error: companyLookupError,
+  } = await supabase
+    .from("companies")
+    .select(
+      "company_id, company_name, company_type"
+    )
+    .ilike(
+      "company_name",
+      normalizedCompany
+    )
+    .maybeSingle();
+
+  if (companyLookupError) {
+    throw new Error(
+      `Failed to find company: ${companyLookupError.message}`
+    );
+  }
+
+  if (existingCompany) {
+    return existingCompany;
+  }
+
+  const {
+    data: newCompany,
+    error: companyInsertError,
+  } = await supabase
+    .from("companies")
+    .insert({
+      company_name:
+        normalizedCompany,
+
+      company_type:
+        "CPSE",
+    })
+    .select(
+      "company_id, company_name, company_type"
+    )
+    .single();
+
+  if (companyInsertError) {
+    throw new Error(
+      `Failed to create company: ${companyInsertError.message}`
+    );
+  }
+
+  return newCompany;
+}
+
+// ============================================================
+// FIND / CREATE FACILITY
+// ============================================================
+
+async function getOrCreateFacility(
+  supabase,
+  companyId,
+  data
+) {
+  const facilityName =
+    clean(
+      data.facility_name
+    ) ||
+    "Unknown Facility";
+
+  const {
+    data: existingFacility,
+    error: facilityLookupError,
+  } = await supabase
+    .from("facilities")
+    .select(
+      `
+        facility_id,
+        company_id,
+        facility_name,
+        city,
+        state,
+        country,
+        address
+      `
+    )
+    .eq(
+      "company_id",
+      companyId
+    )
+    .ilike(
+      "facility_name",
+      facilityName
+    )
+    .maybeSingle();
+
+  if (facilityLookupError) {
+    throw new Error(
+      `Failed to find facility: ${facilityLookupError.message}`
+    );
+  }
+
+  if (existingFacility) {
+    return existingFacility;
+  }
+
+  const location =
+    data.location || {};
+
+  const {
+    data: newFacility,
+    error: facilityInsertError,
+  } = await supabase
+    .from("facilities")
+    .insert({
+      company_id:
+        companyId,
+
+      facility_name:
+        facilityName,
+
+      city:
+        clean(location.city),
+
+      state:
+        clean(location.state),
+
+      country:
+        clean(location.country) ||
+        "India",
+
+      address:
+        clean(location.address),
+    })
+    .select(
+      `
+        facility_id,
+        company_id,
+        facility_name,
+        city,
+        state,
+        country,
+        address
+      `
+    )
+    .single();
+
+  if (facilityInsertError) {
+    throw new Error(
+      `Failed to create facility: ${facilityInsertError.message}`
+    );
+  }
+
+  return newFacility;
+}
+
+// ============================================================
+// FIND EXISTING PRODUCT
+//
+// 1. Same company + same original material code
+// 2. Same company + same product fingerprint
+//
+// Existing historical duplicates are NOT deleted.
+// ============================================================
+
+async function findExistingProduct(
+  supabase,
+  companyId,
+  materialNumber,
+  fingerprint
+) {
+  // ----------------------------------------------------------
+  // CHECK 1:
+  // Same company + same original company material code
+  // ----------------------------------------------------------
+
+  if (materialNumber) {
     const {
-      data: companyResults,
-      error: companyError,
+      data: sameCodeRows,
+      error: sameCodeError,
     } = await supabase
-      .from("companies")
-      .select("company_id, company_name")
-      .ilike("company_name", company)
+      .from("materials")
+      .select(
+        `
+          id,
+          company,
+          company_id,
+          facility_id,
+          material_number,
+          description,
+          specifications,
+          category,
+          unique_product_code,
+          product_fingerprint,
+          bmg_id
+        `
+      )
+      .eq(
+        "company_id",
+        companyId
+      )
+      .eq(
+        "material_number",
+        materialNumber
+      )
+      .order(
+        "id",
+        {
+          ascending: true,
+        }
+      )
       .limit(1);
 
-    if (companyError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Failed to find company.",
-          details: companyError.message,
-        },
-        { status: 500 }
+    if (sameCodeError) {
+      throw new Error(
+        `Failed duplicate check by material code: ${sameCodeError.message}`
       );
     }
 
     if (
-      !companyResults ||
-      companyResults.length === 0
+      sameCodeRows &&
+      sameCodeRows.length > 0
+    ) {
+      return {
+        material:
+          sameCodeRows[0],
+
+        reason:
+          "Same company and same original company material code already exists.",
+      };
+    }
+  }
+
+  // ----------------------------------------------------------
+  // CHECK 2:
+  // Same company + same fingerprint
+  // ----------------------------------------------------------
+
+  if (fingerprint) {
+    const {
+      data: fingerprintRows,
+      error:
+        fingerprintError,
+    } = await supabase
+      .from("materials")
+      .select(
+        `
+          id,
+          company,
+          company_id,
+          facility_id,
+          material_number,
+          description,
+          specifications,
+          category,
+          unique_product_code,
+          product_fingerprint,
+          bmg_id
+        `
+      )
+      .eq(
+        "company_id",
+        companyId
+      )
+      .eq(
+        "product_fingerprint",
+        fingerprint
+      )
+      .order(
+        "id",
+        {
+          ascending: true,
+        }
+      )
+      .limit(1);
+
+    if (fingerprintError) {
+      throw new Error(
+        `Failed duplicate check by fingerprint: ${fingerprintError.message}`
+      );
+    }
+
+    if (
+      fingerprintRows &&
+      fingerprintRows.length > 0
+    ) {
+      return {
+        material:
+          fingerprintRows[0],
+
+        reason:
+          "Same company and same technical product fingerprint already exists.",
+      };
+    }
+  }
+
+  return null;
+}
+
+// ============================================================
+// CREATE UNIQUE COMPANY PRODUCT CODE
+// ============================================================
+
+function makeUniqueProductCode(
+  companyName,
+  materialId
+) {
+  return `BMG-${companyCode(
+    companyName
+  )}-${materialId}`;
+}
+
+// ============================================================
+// POST
+// ============================================================
+
+export async function POST(
+  request
+) {
+  try {
+    const supabase =
+      getSupabaseAdmin();
+
+    const formData =
+      await request.formData();
+
+    // ========================================================
+    // INPUT FILE
+    // ========================================================
+
+    const file =
+      formData.get("file");
+
+    if (
+      !file ||
+      typeof file === "string"
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            `Company "${company}" was not found in the database.`,
+            "PDF file is required.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const companyData = companyResults[0];
+    // ========================================================
+    // EXTRACTED AI DATA
+    // ========================================================
 
-    // ==========================================
-    // 2. UPLOAD ORIGINAL FILE TO STORAGE
-    // ==========================================
+    const aiDataRaw =
+      formData.get(
+        "aiData"
+      );
+
+    if (
+      !aiDataRaw ||
+      typeof aiDataRaw !== "string"
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "AI structured material data is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    let data;
+
+    try {
+      data =
+        JSON.parse(
+          aiDataRaw
+        );
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid AI structured material JSON.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    // ========================================================
+    // BASIC NORMALIZATION
+    // ========================================================
+
+    const companyName =
+      clean(
+        data.company
+      );
+
+    const materialNumber =
+      clean(
+        data.company_material_code
+      );
+
+    const materialName =
+      clean(
+        data.material_name
+      );
+
+    const description =
+      clean(
+        data.description
+      );
+
+    const specifications =
+      clean(
+        data.specifications
+      ) ||
+      clean(
+        data.additional_attributes
+          ?.specifications
+      );
+
+    const category =
+      clean(
+        data.category
+      ) ||
+      clean(
+        data.material_family
+      );
+
+    // ========================================================
+    // COMPANY
+    // ========================================================
+
+    const company =
+      await getOrCreateCompany(
+        supabase,
+        companyName
+      );
+
+    // ========================================================
+    // FACILITY
+    // ========================================================
+
+    const facility =
+      await getOrCreateFacility(
+        supabase,
+        company.company_id,
+        data
+      );
+
+    // ========================================================
+    // FINGERPRINT
+    // ========================================================
+
+    const fingerprint =
+      createFingerprint(
+        data
+      );
+
+    // ========================================================
+    // DUPLICATE DETECTION
+    // ========================================================
+
+    const existing =
+      await findExistingProduct(
+        supabase,
+        company.company_id,
+        materialNumber,
+        fingerprint
+      );
+
+    if (existing) {
+      return NextResponse.json(
+        await existingProductResponse(
+          supabase,
+          existing.material,
+          existing.reason
+        )
+      );
+    }
+
+    // ========================================================
+    // READ PDF
+    // ========================================================
+
+    const fileBuffer =
+      Buffer.from(
+        await file.arrayBuffer()
+      );
 
     const originalFileName =
-      fileName ||
-      file.name ||
-      "datasheet.pdf";
+      clean(
+        file.name
+      ) ||
+      `datasheet-${Date.now()}.pdf`;
 
-    const safeFileName =
-      originalFileName
-        .replace(/[^a-zA-Z0-9._-]/g, "_");
+    // ========================================================
+    // STORAGE PATH
+    // ========================================================
+
+    const safeCompany =
+      companyCode(
+        companyName
+      ) || "UNKNOWN";
 
     const timestamp =
       Date.now();
 
-    const storagePath =
-      `${companyData.company_name}/${timestamp}-${safeFileName}`;
-
-    const fileBuffer =
-      new Uint8Array(
-        await file.arrayBuffer()
+    const safeFileName =
+      originalFileName.replace(
+        /[^a-zA-Z0-9._-]/g,
+        "_"
       );
 
+    const storagePath =
+      `${safeCompany}/${timestamp}-${safeFileName}`;
+
+    // ========================================================
+    // UPLOAD PDF
+    // ========================================================
+
     const {
-      error: storageError,
+      error:
+        storageError,
     } = await supabase.storage
       .from("datasheets")
       .upload(
@@ -171,30 +914,32 @@ export async function POST(request) {
       );
 
     if (storageError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Failed to upload original file to Supabase Storage.",
-          details:
-            storageError.message,
-        },
-        { status: 500 }
+      throw new Error(
+        `Failed to upload PDF to storage: ${storageError.message}`
       );
     }
 
-    // ==========================================
-    // 3. CREATE DATASHEET RECORD
-    // ==========================================
+    // ========================================================
+    // DATASHEET RECORD
+    //
+    // Your current datasheets table uses:
+    // file_name
+    // file_path
+    // ========================================================
 
     const {
-      data: datasheet,
-      error: datasheetError,
+      data:
+        datasheet,
+      error:
+        datasheetError,
     } = await supabase
       .from("datasheets")
       .insert({
         company_id:
-          companyData.company_id,
+          company.company_id,
+
+        facility_id:
+          facility.facility_id,
 
         file_name:
           originalFileName,
@@ -203,179 +948,361 @@ export async function POST(request) {
           storagePath,
 
         file_type:
-          file.type ||
-          "application/pdf",
+          "PDF",
 
         extraction_status:
-          "completed",
+          "EXTRACTED",
+
+        extraction_error:
+          null,
+
+        extracted_at:
+          new Date().toISOString(),
+
+        total_rows_extracted:
+          1,
+
+        total_rows_added:
+          0,
+
+        total_rows_skipped:
+          0,
+
+        metadata: {
+          uploaded_from:
+            "Bharat Material Grid",
+
+          company:
+            companyName,
+
+          facility:
+            facility.facility_name,
+
+          material_number:
+            materialNumber,
+
+          original_filename:
+            originalFileName,
+        },
       })
       .select()
       .single();
 
     if (datasheetError) {
-      // Try to remove the uploaded file
+      // Remove uploaded file if DB insertion fails.
       await supabase.storage
         .from("datasheets")
-        .remove([storagePath]);
+        .remove([
+          storagePath,
+        ]);
 
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Failed to create datasheet record.",
-          details:
-            datasheetError.message,
-        },
-        { status: 500 }
+      throw new Error(
+        `Failed to save datasheet record: ${datasheetError.message}`
       );
     }
 
-    // ==========================================
-    // 4. CREATE COMPANY MATERIAL
-    // ==========================================
+    // ========================================================
+    // INSERT MATERIAL
+    // ========================================================
 
     const {
-      data: material,
-      error: materialError,
+      data:
+        insertedMaterial,
+      error:
+        materialInsertError,
+    } = await supabase
+      .from("materials")
+      .insert({
+        company:
+          companyName,
+
+        company_id:
+          company.company_id,
+
+        facility_id:
+          facility.facility_id,
+
+        material_number:
+          materialNumber,
+
+        description:
+          description ||
+          materialName,
+
+        specifications:
+          specifications,
+
+        category:
+          category,
+
+        unique_product_code:
+          null,
+
+        product_fingerprint:
+          fingerprint,
+
+        bmg_id:
+          null,
+      })
+      .select(
+        `
+          id,
+          company,
+          company_id,
+          facility_id,
+          material_number,
+          description,
+          specifications,
+          category,
+          unique_product_code,
+          product_fingerprint,
+          bmg_id
+        `
+      )
+      .single();
+
+    if (materialInsertError) {
+      await supabase.storage
+        .from("datasheets")
+        .remove([
+          storagePath,
+        ]);
+
+      await supabase
+        .from("datasheets")
+        .delete()
+        .eq(
+          "datasheet_id",
+          datasheet.datasheet_id
+        );
+
+      throw new Error(
+        `Failed to insert material: ${materialInsertError.message}`
+      );
+    }
+
+    // ========================================================
+    // CREATE UNIQUE PRODUCT CODE
+    // ========================================================
+
+    const uniqueProductCode =
+      makeUniqueProductCode(
+        companyName,
+        insertedMaterial.id
+      );
+
+    const {
+      data:
+        updatedMaterial,
+      error:
+        productCodeError,
+    } = await supabase
+      .from("materials")
+      .update({
+        unique_product_code:
+          uniqueProductCode,
+      })
+      .eq(
+        "id",
+        insertedMaterial.id
+      )
+      .select(
+        `
+          id,
+          company,
+          company_id,
+          facility_id,
+          material_number,
+          description,
+          specifications,
+          category,
+          unique_product_code,
+          product_fingerprint,
+          bmg_id
+        `
+      )
+      .single();
+
+    if (productCodeError) {
+      throw new Error(
+        `Failed to create unique product code: ${productCodeError.message}`
+      );
+    }
+
+    // ========================================================
+    // COMPANY MATERIAL RECORD
+    //
+    // company_materials.material_id is generated identity.
+    // source_material_id points to materials.id.
+    // ========================================================
+
+    const {
+      data:
+        companyMaterial,
+      error:
+        companyMaterialError,
     } = await supabase
       .from("company_materials")
       .insert({
         company_id:
-          companyData.company_id,
+          company.company_id,
 
         datasheet_id:
           datasheet.datasheet_id,
 
+        source_material_id:
+          updatedMaterial.id,
+
         company_material_code:
-          structuredData.company_material_code ||
-          null,
+          materialNumber,
 
         material_name:
-          structuredData.material_name ||
-          null,
+          materialName,
 
         description:
-          structuredData.description ||
-          null,
+          description,
+
+        raw_data:
+          data,
       })
       .select()
       .single();
 
-    if (materialError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Failed to create material record.",
-          details:
-            materialError.message,
-        },
-        { status: 500 }
+    if (companyMaterialError) {
+      throw new Error(
+        `Failed to save company material: ${companyMaterialError.message}`
       );
     }
 
-    // ==========================================
-    // 5. CREATE MATERIAL ATTRIBUTES
-    // ==========================================
+    // ========================================================
+    // MATERIAL DETAILS
+    // ========================================================
 
-    const dimensions =
-      structuredData.dimensions || {};
-
-    const materials =
-      structuredData.materials || {};
+    const materialDetails =
+      buildMaterialDetails(
+        data
+      );
 
     const {
-      error: attributesError,
+      data:
+        savedDetails,
+      error:
+        detailsError,
     } = await supabase
-      .from("material_attributes")
+      .from("material_details")
       .insert({
         material_id:
-          material.material_id,
+          updatedMaterial.id,
 
-        material_family:
-          structuredData.material_family ||
-          null,
+        ...materialDetails,
+      })
+      .select()
+      .single();
 
-        dimensions:
-          dimensions,
-
-        material_grade:
-          materials.body ||
-          null,
-
-        pressure_rating:
-          structuredData.pressure_rating ||
-          null,
-
-        temperature_rating:
-          structuredData.temperature_rating ||
-          null,
-
-        standards:
-          structuredData.standards ||
-          [],
-
-        manufacturer:
-          structuredData.manufacturer ||
-          null,
-
-        model:
-          structuredData.model ||
-          null,
-
-        design_features:
-          structuredData.design_features ||
-          [],
-
-        other_attributes:
-          structuredData.additional_attributes ||
-          {},
-      });
-
-    if (attributesError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Failed to create material attributes.",
-          details:
-            attributesError.message,
-        },
-        { status: 500 }
+    if (detailsError) {
+      throw new Error(
+        `Failed to save material technical details: ${detailsError.message}`
       );
     }
 
-    // ==========================================
-    // SUCCESS
-    // ==========================================
+    // ========================================================
+    // UPDATE DATASHEET COUNTS
+    // ========================================================
+
+    await supabase
+      .from("datasheets")
+      .update({
+        total_rows_added:
+          1,
+
+        total_rows_skipped:
+          0,
+      })
+      .eq(
+        "datasheet_id",
+        datasheet.datasheet_id
+      );
+
+    // ========================================================
+    // RETURN NEW PRODUCT
+    //
+    // BMG is deliberately null here.
+    //
+    // The next endpoint /api/assign-bmg will assign:
+    //
+    // BMG Common Code
+    // NCS Standard Name
+    //
+    // automatically.
+    // ========================================================
 
     return NextResponse.json({
       success: true,
 
+      duplicate: false,
+
       message:
-        "Material and original datasheet saved successfully.",
+        "New material saved successfully.",
 
       data: {
-        company_id:
-          companyData.company_id,
+        material_id:
+          updatedMaterial.id,
 
-        company_name:
-          companyData.company_name,
+        unique_product_code:
+          uniqueProductCode,
+
+        bmg_id:
+          null,
+
+        bmg_code:
+          null,
+
+        ncs_name:
+          null,
+
+        company:
+          companyName,
+
+        company_id:
+          company.company_id,
+
+        facility_id:
+          facility.facility_id,
+
+        facility_name:
+          facility.facility_name,
+
+        company_material_code:
+          materialNumber,
+
+        material_name:
+          materialName,
+
+        description:
+          description,
+
+        specifications:
+          specifications,
+
+        category:
+          category,
 
         datasheet_id:
           datasheet.datasheet_id,
 
-        material_id:
-          material.material_id,
+        company_material_id:
+          companyMaterial.material_id,
 
-        storage_path:
-          storagePath,
+        detail_id:
+          savedDetails.detail_id,
+
+        fingerprint:
+          fingerprint,
       },
     });
-
   } catch (error) {
     console.error(
-      "Save material error:",
+      "SAVE MATERIAL ERROR:",
       error
     );
 
@@ -384,13 +1311,12 @@ export async function POST(request) {
         success: false,
 
         error:
-          "Failed to save material.",
-
-        details:
           error?.message ||
-          String(error),
+          "Failed to save material.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
