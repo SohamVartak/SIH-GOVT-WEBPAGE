@@ -26,8 +26,9 @@ import { CPSEManagementView } from './components/views/CPSEManagementView';
 import { AuditCenterView } from './components/views/AuditCenterView';
 import { AdminView } from './components/views/AdminView';
 import { LoginView } from './components/views/LoginView';
+import { RegisterView } from './components/views/RegisterView';
 
-// New ERP / Legacy Migration View
+// ERP / Legacy Migration View
 import { MaterialMigrationView } from './components/views/MaterialMigrationView';
 
 export const App: React.FC = () => {
@@ -38,10 +39,17 @@ export const App: React.FC = () => {
 
   React.useEffect(() => {
     const syncRoute = () => {
-      if (
-        window.location.pathname === '/login'
-      ) {
+      const pathname =
+        window.location.pathname;
+
+      if (pathname === '/login') {
         setCurrentTab('login');
+        return;
+      }
+
+      if (pathname === '/register') {
+        setCurrentTab('register');
+        return;
       }
     };
 
@@ -60,13 +68,26 @@ export const App: React.FC = () => {
   }, [setCurrentTab]);
 
   // ==========================================================
-  // GOVERNMENT LOGIN PAGE
+  // LOGIN PAGE
   // ==========================================================
 
   if (currentTab === 'login') {
     return (
       <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans">
         <LoginView />
+        <ToastContainer />
+      </div>
+    );
+  }
+
+  // ==========================================================
+  // REGISTRATION PAGE
+  // ==========================================================
+
+  if (currentTab === 'register') {
+    return (
+      <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans">
+        <RegisterView />
         <ToastContainer />
       </div>
     );
@@ -102,38 +123,18 @@ export const App: React.FC = () => {
       case 'material-360':
         return <Material360View />;
 
-      // ======================================================
-      // PART SEARCH & DATASHEETS
-      // ======================================================
-
       case 'procurement':
       case 'what-if':
         return <ProcurementView />;
 
-      // ======================================================
-      // CPSE MANAGEMENT
-      // ======================================================
-
       case 'cpse':
         return <CPSEManagementView />;
-
-      // ======================================================
-      // ERP / LEGACY MATERIAL MIGRATION
-      // ======================================================
 
       case 'migration':
         return <MaterialMigrationView />;
 
-      // ======================================================
-      // AUDIT & GOVERNANCE
-      // ======================================================
-
       case 'audit':
         return <AuditCenterView />;
-
-      // ======================================================
-      // ADMINISTRATION
-      // ======================================================
 
       case 'admin':
         return <AdminView />;
@@ -150,21 +151,16 @@ export const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans selection:bg-amber-500 selection:text-white">
 
-      {/* Government Header */}
       <GovHeader />
 
-      {/* Breadcrumb */}
       <GovBreadcrumb />
 
-      {/* Main Content */}
       <main className="flex-1 w-full min-w-0 bg-[#f8fafc]">
         {renderActiveView()}
       </main>
 
-      {/* Government Footer */}
       <GovFooter />
 
-      {/* Enterprise Overlays */}
       <FloatingChatbotButton />
       <BharatAIAssistant />
       <NotificationsDrawer />

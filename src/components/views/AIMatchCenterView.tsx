@@ -1,1054 +1,1281 @@
-import React, { useMemo, useState } from 'react';
+import React, {
+  useMemo,
+  useState,
+} from "react";
+
 import {
   Search,
-  Database,
-  Building2,
-  FileText,
-  Tag,
-  CheckCircle2,
-  AlertCircle,
   Sparkles,
-  RefreshCw,
-  Trophy,
-  Target,
-  SlidersHorizontal,
+  Cpu,
+  Building2,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
   Loader2,
-} from 'lucide-react';
+  ArrowRight,
+  Database,
+  RefreshCw,
+} from "lucide-react";
 
-import { useApp } from '../../context/AppContext';
+import { motion } from "motion/react";
 
-type MaterialRecord = {
+import { useApp } from "../../context/AppContext";
+
+type DatabaseMaterial = {
   id: number;
-  company?: string | null;
-  material_number?: string | null;
-  description?: string | null;
-  specifications?: string | null;
-  category?: string | null;
+  company: string | null;
+  material_number:
+    | string
+    | null;
+  description:
+    | string
+    | null;
+  specifications:
+    | string
+    | null;
+  category:
+    | string
+    | null;
 };
 
-type CompanyMatch = {
-  company: string;
-  material: MaterialRecord | null;
-  score: number;
-  reason: string;
-  matchedFields: string[];
-  matchedSpecifications: string[];
+type MatchResult = {
+  rank:
+    | number
+    | null;
+
+  material_id:
+    | number
+    | null;
+
+  company:
+    | string
+    | null;
+
+  material_number:
+    | string
+    | null;
+
+  description:
+    | string
+    | null;
+
+  category:
+    | string
+    | null;
+
+  similarity:
+    | number;
+
+  similarity_percent:
+    | number;
+
+  recommendation:
+    | string;
 };
 
-const DEFAULT_MIN_SCORE = 50;
+type SearchResponse = {
+  success: boolean;
 
-function getCompanyKey(company?: string | null): string {
-  const value = String(company ?? '').trim().toUpperCase();
-  return value || 'UNKNOWN';
+  mode?: string;
+
+  query?: {
+    material_id:
+      | number
+      | null;
+
+    company:
+      | string
+      | null;
+
+    material_number:
+      | string
+      | null;
+
+    description:
+      | string
+      | null;
+
+    category:
+      | string
+      | null;
+
+    specifications:
+      | string
+      | null;
+
+    search_text:
+      | string
+      | null;
+  };
+
+  embedding?: {
+    model:
+      | string;
+
+    dimensions:
+      | number;
+
+    generated:
+      | boolean;
+  };
+
+  count?: number;
+
+  matches?:
+    | MatchResult[];
+
+  best_match_by_company?:
+    | MatchResult[];
+
+  company_results?:
+    | MatchResult[];
+
+  error?:
+    | string;
+
+  details?:
+    | string;
+};
+
+const TARGET_COMPANIES = [
+  "IOCL",
+  "BPCL",
+  "HPCL",
+  "BHEL",
+  "ONGC",
+];
+
+function companyName(
+  value: string | null
+) {
+  return (
+    value?.trim().toUpperCase() ||
+    "UNKNOWN"
+  );
+}
+
+function recommendationLabel(
+  recommendation: string
+) {
+  switch (
+    recommendation
+  ) {
+    case "LIKELY_MATCH":
+      return "LIKELY MATCH";
+
+    case "REVIEW":
+      return "REVIEW";
+
+    case "LOW_CONFIDENCE":
+      return "LOW CONFIDENCE";
+
+    case "NO_MATCH":
+      return "NO MATCH";
+
+    default:
+      return "UNASSESSED";
+  }
+}
+
+function recommendationClasses(
+  recommendation: string
+) {
+  switch (
+    recommendation
+  ) {
+    case "LIKELY_MATCH":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+
+    case "REVIEW":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+
+    case "LOW_CONFIDENCE":
+      return "bg-orange-50 text-orange-700 border-orange-200";
+
+    case "NO_MATCH":
+      return "bg-slate-100 text-slate-500 border-slate-200";
+
+    default:
+      return "bg-slate-100 text-slate-500 border-slate-200";
+  }
 }
 
 export default function AIMatchCenterView() {
-  const { materials, materialsLoading } = useApp();
+  const {
+    materials,
+    materialsLoading,
+    addToast,
+  } = useApp();
 
-  const [query, setQuery] = useState('');
-  const [submittedQuery, setSubmittedQuery] = useState('');
-  const [selectedCompany, setSelectedCompany] = useState<string>('ALL');
-  const [minScore, setMinScore] = useState(DEFAULT_MIN_SCORE);
+  const databaseMaterials =
+    materials as unknown as DatabaseMaterial[];
 
-  const [sourceCompany, setSourceCompany] =
-    useState<string>('');
+  const [materialInput, setMaterialInput] =
+    useState("");
 
-  const [matches, setMatches] = useState<CompanyMatch[]>([]);
-  const [overallBest, setOverallBest] =
-    useState<CompanyMatch | null>(null);
+  const [specificationInput, setSpecificationInput] =
+    useState("");
 
-  const [isMatching, setIsMatching] =
+  const [companyInput, setCompanyInput] =
+    useState("");
+
+  const [categoryInput, setCategoryInput] =
+    useState("");
+
+  const [selectedMaterialId, setSelectedMaterialId] =
+    useState<number | null>(null);
+
+  const [suggestionsOpen, setSuggestionsOpen] =
     useState(false);
 
-  const [matchError, setMatchError] =
-    useState('');
+  const [isSearching, setIsSearching] =
+    useState(false);
 
-  const companyCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
+  const [results, setResults] =
+    useState<SearchResponse | null>(null);
 
-    materials.forEach((material) => {
-      const company = getCompanyKey(material.company);
+  const [errorMessage, setErrorMessage] =
+    useState("");
 
-      if (!counts[company]) {
-        counts[company] = 0;
-      }
-
-      counts[company]++;
-    });
-
-    return counts;
-  }, [materials]);
-
-  const companies = useMemo(() => {
-    return Object.keys(companyCounts)
-      .filter((company) => company !== 'UNKNOWN')
-      .sort();
-  }, [companyCounts]);
-
-  const displayedMatches = useMemo(() => {
-    return matches
-      .filter((match) => {
-        if (selectedCompany === 'ALL') {
-          return true;
-        }
-
-        return (
-          getCompanyKey(match.company) ===
-          selectedCompany
-        );
-      })
-      .filter(
-        (match) =>
-          match.material !== null &&
-          match.score >= minScore
-      )
-      .sort(
-        (a, b) =>
-          b.score - a.score
-      );
-  }, [
-    matches,
-    selectedCompany,
-    minScore,
-  ]);
-
-  const handleSearch = async () => {
-    const trimmedQuery = query.trim();
-
-    if (!trimmedQuery) {
-      return;
-    }
-
-    setSubmittedQuery(trimmedQuery);
-    setIsMatching(true);
-    setMatchError('');
-    setMatches([]);
-    setOverallBest(null);
-
-    try {
-      const response = await fetch(
-        '/api/match-materials',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type':
-              'application/json',
-          },
-          body: JSON.stringify({
-            query: trimmedQuery,
-            sourceCompany:
-              sourceCompany || null,
-            materials,
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (
-        !response.ok ||
-        !data?.success
-      ) {
-        throw new Error(
-          data?.error ||
-            'Material matching failed.'
-        );
-      }
-
-      const apiMatches: CompanyMatch[] =
-        Array.isArray(data.matches)
-          ? data.matches
-          : [];
-
-      const safeMatches =
-        apiMatches.filter(
-          (match) =>
-            match &&
-            typeof match.company ===
-              'string'
-        );
-
-      setMatches(
-        safeMatches
-      );
-
-      if (
-        data.overallBest &&
-        typeof data.overallBest ===
-          'object'
-      ) {
-        setOverallBest(
-          data.overallBest
-        );
-      } else {
-        setOverallBest(null);
-      }
-    } catch (error) {
-      console.error(
-        'Material matching error:',
-        error
-      );
-
-      setMatchError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to find material matches.'
-      );
-    } finally {
-      setIsMatching(false);
-    }
-  };
-
-  const clearSearch = () => {
-    setQuery('');
-    setSubmittedQuery('');
-    setMatches([]);
-    setOverallBest(null);
-    setMatchError('');
-  };
-
-  if (materialsLoading) {
-    return (
-      <div className="flex min-h-[500px] items-center justify-center">
-        <div className="text-center">
-          <RefreshCw className="mx-auto mb-3 h-8 w-8 animate-spin text-slate-500" />
-
-          <p className="text-sm text-slate-600">
-            Loading material data from Supabase...
-          </p>
-        </div>
-      </div>
+  const selectedMaterial =
+    useMemo(
+      () =>
+        databaseMaterials.find(
+          (material) =>
+            material.id ===
+            selectedMaterialId
+        ) || null,
+      [
+        databaseMaterials,
+        selectedMaterialId,
+      ]
     );
-  }
+
+  const suggestions =
+    useMemo(() => {
+      const query =
+        materialInput
+          .trim()
+          .toLowerCase();
+
+      if (!query) {
+        return databaseMaterials
+          .slice(0, 8);
+      }
+
+      return databaseMaterials
+        .filter(
+          (material) =>
+            String(
+              material.material_number ||
+                ""
+            )
+              .toLowerCase()
+              .includes(query) ||
+            String(
+              material.description ||
+                ""
+            )
+              .toLowerCase()
+              .includes(query) ||
+            String(
+              material.company ||
+                ""
+            )
+              .toLowerCase()
+              .includes(query)
+        )
+        .slice(0, 8);
+    }, [
+      databaseMaterials,
+      materialInput,
+    ]);
+
+  const selectMaterial =
+    (
+      material: DatabaseMaterial
+    ) => {
+      setSelectedMaterialId(
+        material.id
+      );
+
+      setMaterialInput(
+        material.material_number ||
+          material.description ||
+          ""
+      );
+
+      if (
+        !specificationInput.trim() &&
+        material.specifications
+      ) {
+        setSpecificationInput(
+          material.specifications
+        );
+      }
+
+      if (
+        !companyInput.trim() &&
+        material.company
+      ) {
+        setCompanyInput(
+          material.company
+        );
+      }
+
+      if (
+        !categoryInput.trim() &&
+        material.category
+      ) {
+        setCategoryInput(
+          material.category
+        );
+      }
+
+      setSuggestionsOpen(false);
+    };
+
+  const findExactMaterial =
+    () => {
+      const query =
+        materialInput
+          .trim()
+          .toLowerCase();
+
+      if (!query) {
+        return null;
+      }
+
+      return (
+        databaseMaterials.find(
+          (material) =>
+            String(
+              material.material_number ||
+                ""
+            )
+              .trim()
+              .toLowerCase() ===
+              query
+        ) ||
+        databaseMaterials.find(
+          (material) =>
+            String(
+              material.description ||
+                ""
+            )
+              .trim()
+              .toLowerCase() ===
+              query
+        ) ||
+        null
+      );
+    };
+
+  const runSearch =
+    async () => {
+      setErrorMessage("");
+      setResults(null);
+
+      const exactMaterial =
+        selectedMaterial ||
+        findExactMaterial();
+
+      const hasMaterial =
+        Boolean(
+          exactMaterial
+        );
+
+      const hasQuery =
+        Boolean(
+          materialInput.trim() ||
+            specificationInput.trim() ||
+            companyInput.trim() ||
+            categoryInput.trim()
+        );
+
+      if (
+        !hasMaterial &&
+        !hasQuery
+      ) {
+        const message =
+          "Enter a material code, description, or specification first.";
+
+        setErrorMessage(
+          message
+        );
+
+        addToast({
+          title:
+            "Search Input Required",
+          message,
+          type: "warning",
+        });
+
+        return;
+      }
+
+      setIsSearching(true);
+
+      try {
+        const response =
+          await fetch(
+            "/api/semantic-search",
+            {
+              method:
+                "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify(
+                hasMaterial
+                  ? {
+                      materialId:
+                        exactMaterial
+                          .id,
+
+                      matchCount:
+                        30,
+                    }
+                  : {
+                      company:
+                        companyInput.trim(),
+
+                      materialNumber:
+                        materialInput.trim(),
+
+                      description:
+                        materialInput.trim(),
+
+                      specifications:
+                        specificationInput.trim(),
+
+                      category:
+                        categoryInput.trim(),
+
+                      matchCount:
+                        30,
+                    }
+              ),
+            }
+          );
+
+        const data =
+          (await response.json()) as SearchResponse;
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          throw new Error(
+            data.details ||
+              data.error ||
+              "Semantic search failed."
+          );
+        }
+
+        setResults(
+          data
+        );
+
+        addToast({
+          title:
+            "AI Match Complete",
+          message:
+            `${data.count || 0} semantic matches evaluated.`,
+          type: "success",
+        });
+      } catch (
+        error
+      ) {
+        console.error(
+          "AI matcher error:",
+          error
+        );
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to run semantic search.";
+
+        setErrorMessage(
+          message
+        );
+
+        addToast({
+          title:
+            "AI Match Failed",
+          message,
+          type: "error",
+        });
+      } finally {
+        setIsSearching(false);
+      }
+    };
+
+  const clearSearch =
+    () => {
+      setMaterialInput("");
+      setSpecificationInput("");
+      setCompanyInput("");
+      setCategoryInput("");
+      setSelectedMaterialId(
+        null
+      );
+      setResults(null);
+      setErrorMessage("");
+      setSuggestionsOpen(
+        false
+      );
+    };
+
+  const source =
+    results?.query;
+
+  const companyResults =
+    results?.company_results ||
+    TARGET_COMPANIES.map(
+      (company) => ({
+        rank: null,
+        material_id: null,
+        company,
+        material_number: null,
+        description: null,
+        category: null,
+        similarity: 0,
+        similarity_percent: 0,
+        recommendation:
+          "NO_MATCH",
+      })
+    );
 
   return (
-    <div className="space-y-6 p-6">
-      {/* HEADER */}
-      <div>
-        <div className="mb-2 flex items-center gap-2">
-          <Sparkles className="h-6 w-6 text-indigo-600" />
+    <div className="min-h-full bg-[#f8fafc] px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1500px] space-y-6">
+        {/* =====================================================
+            HEADER
+        ===================================================== */}
 
-          <span className="text-sm font-semibold uppercase tracking-wide text-indigo-600">
-            AI Material Match Center
-          </span>
-        </div>
-
-        <h1 className="text-2xl font-bold text-slate-900">
-          Cross-Company Material Comparison
-        </h1>
-
-        <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-600">
-          Enter a part name and its specifications.
-          The AI searches the available material records
-          and returns at most one strong candidate from
-          each company.
-        </p>
-      </div>
-
-      {/* DATABASE SUMMARY */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <SummaryCard
-          icon={
-            <Database className="h-5 w-5" />
-          }
-          label="Total Materials"
-          value={materials.length}
-        />
-
-        <SummaryCard
-          icon={
-            <Building2 className="h-5 w-5" />
-          }
-          label="Companies"
-          value={companies.length}
-        />
-
-        <SummaryCard
-          icon={
-            <Target className="h-5 w-5" />
-          }
-          label="Minimum Match"
-          value={`${minScore}%`}
-        />
-
-        <SummaryCard
-          icon={
-            <Trophy className="h-5 w-5" />
-          }
-          label="Companies Matched"
-          value={
-            displayedMatches.length
-          }
-        />
-      </div>
-
-      {/* SEARCH */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex items-start gap-3">
-          <div className="rounded-lg bg-indigo-100 p-2">
-            <Sparkles className="h-5 w-5 text-indigo-600" />
-          </div>
-
-          <div>
-            <h2 className="font-semibold text-slate-900">
-              AI Material Search
-            </h2>
-
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              Describe the part and include as many technical
-              specifications as you know.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 lg:flex-row">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
-            <input
-              type="text"
-              value={query}
-              onChange={(event) =>
-                setQuery(event.target.value)
-              }
-              onKeyDown={(event) => {
-                if (
-                  event.key ===
-                  'Enter'
-                ) {
-                  void handleSearch();
-                }
-              }}
-              placeholder="Example: fuse 32 amps 500V HRC"
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none transition focus:border-indigo-400 focus:bg-white"
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              void handleSearch();
-            }}
-            disabled={
-              !query.trim() ||
-              isMatching
-            }
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isMatching ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                AI Matching...
-              </>
-            ) : (
-              <>
-                <Search className="h-4 w-4" />
-                Find Matches
-              </>
-            )}
-          </button>
-
-          {submittedQuery && (
-            <button
-              type="button"
-              onClick={clearSearch}
-              disabled={isMatching}
-              className="rounded-lg border border-slate-200 px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-
-        {/* FILTERS */}
-        <div className="mt-5 grid gap-4 border-t border-slate-100 pt-5 md:grid-cols-3">
-          {/* SOURCE COMPANY */}
-          <div>
-            <div className="mb-2 flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-slate-400" />
-
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Source Company
-              </label>
-            </div>
-
-            <select
-              value={sourceCompany}
-              onChange={(event) =>
-                setSourceCompany(
-                  event.target.value
-                )
-              }
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-400"
-            >
-              <option value="">
-                No source company
-              </option>
-
-              {companies.map(
-                (company) => (
-                  <option
-                    key={company}
-                    value={company}
-                  >
-                    {company}
-                  </option>
-                )
-              )}
-            </select>
-
-            <p className="mt-1 text-xs text-slate-400">
-              Selected source company will be
-              excluded from matching.
-            </p>
-          </div>
-
-          {/* RESULT COMPANY FILTER */}
-          <div>
-            <div className="mb-2 flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-slate-400" />
-
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Results From
-              </label>
-            </div>
-
-            <select
-              value={selectedCompany}
-              onChange={(event) =>
-                setSelectedCompany(
-                  event.target.value
-                )
-              }
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-400"
-            >
-              <option value="ALL">
-                All Companies
-              </option>
-
-              {companies.map(
-                (company) => (
-                  <option
-                    key={company}
-                    value={company}
-                  >
-                    {company} (
-                    {
-                      companyCounts[
-                        company
-                      ]
-                    }
-                    )
-                  </option>
-                )
-              )}
-            </select>
-          </div>
-
-          {/* SCORE */}
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <SlidersHorizontal className="h-4 w-4 text-slate-400" />
-
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Minimum Match Score
-                </label>
-              </div>
-
-              <span className="text-sm font-bold text-slate-800">
-                {minScore}%
-              </span>
-            </div>
-
-            <input
-              type="range"
-              min="20"
-              max="90"
-              value={minScore}
-              onChange={(event) =>
-                setMinScore(
-                  Number(
-                    event.target.value
-                  )
-                )
-              }
-              className="w-full"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* MATCHING ERROR */}
-      {matchError && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-5">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
-
-            <div>
-              <h2 className="font-semibold text-red-800">
-                AI matching failed
-              </h2>
-
-              <p className="mt-1 text-sm text-red-700">
-                {matchError}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* NO SEARCH */}
-      {!submittedQuery && (
-        <>
-          <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center">
-            <Sparkles className="mx-auto mb-4 h-10 w-10 text-slate-300" />
-
-            <h2 className="font-semibold text-slate-800">
-              Enter a material to compare
-            </h2>
-
-            <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
-              Example:
-              <br />
-              <span className="font-medium text-slate-700">
-                fuse 32 amps 500V HRC
-              </span>
-            </p>
-          </div>
-
-          <div>
-            <div className="mb-4">
-              <h2 className="text-xl font-bold text-slate-900">
-                Available Company Data
-              </h2>
-
-              <p className="mt-1 text-sm text-slate-500">
-                Material records currently loaded from
-                Supabase.
-              </p>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {companies.map(
-                (company) => (
-                  <CompanyDataCard
-                    key={company}
-                    company={company}
-                    count={
-                      companyCounts[
-                        company
-                      ]
-                    }
-                  />
-                )
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* SEARCH RESULTS */}
-      {submittedQuery && !isMatching && (
-        <>
-          <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-[#002244] via-[#00315c] to-[#0f172a] text-white shadow-sm">
+          <div className="border-b border-white/10 bg-black/10 px-6 py-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
-                  AI Search Query
-                </p>
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[10px] font-bold tracking-[0.18em] text-emerald-300">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  LIVE AI ENGINE
+                </div>
 
-                <p className="mt-1 text-lg font-bold text-slate-900">
-                  {submittedQuery}
-                </p>
+                <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
+                  AI Specification Matcher
+                </h1>
 
-                <p className="mt-1 text-sm text-slate-600">
-                  Showing at most one qualifying result from
-                  each company.
-                  {sourceCompany && (
-                    <>
-                      {' '}
-                      {sourceCompany} is excluded as the
-                      source company.
-                    </>
-                  )}
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+                  Compare CPSE material descriptions and
+                  engineering specifications using Gemini
+                  embeddings and vector similarity.
                 </p>
               </div>
 
-              <div className="rounded-lg border border-indigo-200 bg-white px-4 py-3 text-center">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Qualifying Companies
-                </p>
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-right">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  DATABASE STATUS
+                </div>
 
-                <p className="text-2xl font-bold text-indigo-700">
-                  {
-                    displayedMatches.length
-                  }
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* OVERALL BEST */}
-          {overallBest &&
-            overallBest.material &&
-            overallBest.score >=
-              minScore && (
-              <div className="rounded-xl border-2 border-green-200 bg-green-50 p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex items-start gap-3">
-                    <div className="rounded-lg bg-green-100 p-2">
-                      <Trophy className="h-6 w-6 text-green-700" />
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-wide text-green-700">
-                        Overall Closest Match
-                      </p>
-
-                      <h2 className="mt-1 text-xl font-bold text-slate-900">
-                        {
-                          overallBest.company
-                        }
-                      </h2>
-
-                      <p className="mt-1 text-sm text-slate-600">
-                        {overallBest
-                          .material
-                          .description ||
-                          'No description available'}
-                      </p>
-
-                      {overallBest
-                        .material
-                        .material_number && (
-                        <p className="mt-1 font-mono text-xs text-slate-500">
-                          {
-                            overallBest
-                              .material
-                              .material_number
-                          }
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="text-left lg:text-right">
-                    <p className="text-4xl font-bold text-green-700">
-                      {
-                        overallBest.score
-                      }
-                      %
-                    </p>
-
-                    <p className="text-xs font-medium text-slate-500">
-                      highest AI similarity
-                    </p>
-                  </div>
+                <div className="mt-1 flex items-center justify-end gap-2 text-sm font-bold text-emerald-300">
+                  <Database className="h-4 w-4" />
+                  {materialsLoading
+                    ? "Loading..."
+                    : `${databaseMaterials.length.toLocaleString()} materials`}
                 </div>
               </div>
-            )}
-
-          {/* NO QUALIFYING RESULT */}
-          {displayedMatches.length ===
-            0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-8 text-center">
-              <AlertCircle className="mx-auto mb-3 h-8 w-8 text-amber-500" />
-
-              <h2 className="font-semibold text-slate-800">
-                No sufficiently close material found
-              </h2>
-
-              <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">
-                No company result reached the current
-                minimum score of {minScore}%.
-                Try adding more technical specifications or
-                lowering the threshold.
-              </p>
             </div>
-          )}
+          </div>
 
-          {/* COMPANY RESULTS */}
-          {displayedMatches.length >
-            0 && (
-            <div>
-              <div className="mb-4">
-                <h2 className="text-xl font-bold text-slate-900">
-                  Best Match From Each Company
-                </h2>
+          {/* ===================================================
+              SEARCH PANEL
+          =================================================== */}
 
-                <p className="mt-1 text-sm text-slate-500">
-                  Only the highest-scoring qualifying material
-                  from each company is shown.
-                </p>
+          <div className="grid gap-4 p-6 lg:grid-cols-12">
+            <div className="lg:col-span-7">
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-300">
+                Material / Code / Description
+              </label>
+
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+
+                <input
+                  value={
+                    materialInput
+                  }
+                  onChange={(
+                    event
+                  ) => {
+                    setMaterialInput(
+                      event.target
+                        .value
+                    );
+
+                    setSelectedMaterialId(
+                      null
+                    );
+
+                    setSuggestionsOpen(
+                      true
+                    );
+                  }}
+                  onFocus={() =>
+                    setSuggestionsOpen(
+                      true
+                    )
+                  }
+                  onKeyDown={(
+                    event
+                  ) => {
+                    if (
+                      event.key ===
+                      "Enter"
+                    ) {
+                      event.preventDefault();
+
+                      setSuggestionsOpen(
+                        false
+                      );
+
+                      void runSearch();
+                    }
+                  }}
+                  placeholder="e.g. 4834093524 or CHECK VALVE SWING TYPE"
+                  className="w-full rounded-xl border border-white/15 bg-white/10 py-3.5 pl-11 pr-4 text-sm text-white outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                />
+
+                {suggestionsOpen &&
+                  suggestions.length >
+                    0 && (
+                    <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                      {suggestions.map(
+                        (
+                          material
+                        ) => (
+                          <button
+                            key={
+                              material.id
+                            }
+                            type="button"
+                            onMouseDown={(
+                              event
+                            ) =>
+                              event.preventDefault()
+                            }
+                            onClick={() =>
+                              selectMaterial(
+                                material
+                              )
+                            }
+                            className="flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left last:border-b-0 hover:bg-slate-50"
+                          >
+                            <div className="mt-0.5 rounded-lg bg-slate-100 p-2">
+                              <Building2 className="h-4 w-4 text-slate-600" />
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="font-mono text-xs font-bold text-slate-900">
+                                {material.material_number ||
+                                  `ID ${material.id}`}
+                              </div>
+
+                              <div className="mt-0.5 truncate text-xs text-slate-600">
+                                {material.description ||
+                                  "No description"}
+                              </div>
+
+                              <div className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                {companyName(
+                                  material.company
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        )
+                      )}
+                    </div>
+                  )}
               </div>
 
-              <div className="grid gap-5 lg:grid-cols-2">
-                {displayedMatches.map(
-                  (result, index) => (
-                    <MatchCard
-                      key={`${result.company}-${result.material?.id ?? index}`}
-                      rank={index + 1}
-                      result={result}
-                      overallBest={
-                        overallBest?.material?.id ===
-                        result.material?.id
-                      }
-                    />
+              {selectedMaterial && (
+                <div className="mt-2 rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-200">
+                  Selected database record:
+                  <span className="ml-1 font-mono font-bold">
+                    {selectedMaterial.material_number ||
+                      `ID ${selectedMaterial.id}`}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="lg:col-span-5">
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-300">
+                Company / CPSE
+              </label>
+
+              <input
+                value={
+                  companyInput
+                }
+                onChange={(
+                  event
+                ) =>
+                  setCompanyInput(
+                    event.target
+                      .value
                   )
+                }
+                placeholder="Optional: IOCL, BPCL, HPCL..."
+                className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3.5 text-sm text-white outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+              />
+            </div>
+
+            <div className="lg:col-span-12">
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-300">
+                Technical Specification
+              </label>
+
+              <textarea
+                value={
+                  specificationInput
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSpecificationInput(
+                    event.target
+                      .value
+                  )
+                }
+                rows={4}
+                placeholder="Enter size, pressure class, material grade, standard, end connection, dimensions, or any technical specification..."
+                className="w-full resize-none rounded-xl border border-white/15 bg-white/10 px-4 py-3.5 text-sm leading-6 text-white outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+              />
+            </div>
+
+            <div className="lg:col-span-4">
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-300">
+                Category
+              </label>
+
+              <input
+                value={
+                  categoryInput
+                }
+                onChange={(
+                  event
+                ) =>
+                  setCategoryInput(
+                    event.target
+                      .value
+                  )
+                }
+                placeholder="Optional: Valve, Pump, Bearing..."
+                className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3.5 text-sm text-white outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+              />
+            </div>
+
+            <div className="flex items-end gap-2 lg:col-span-8 lg:justify-end">
+              <button
+                type="button"
+                onClick={
+                  clearSearch
+                }
+                disabled={
+                  isSearching
+                }
+                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-xs font-bold text-slate-300 transition hover:bg-white/10"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Clear
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void runSearch()
+                }
+                disabled={
+                  isSearching
+                }
+                className="inline-flex min-w-[190px] items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-black text-slate-950 shadow-lg transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSearching ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    AI MATCHING...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    FIND BEST MATCHES
+                    <ArrowRight className="h-4 w-4" />
+                  </>
                 )}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* =====================================================
+            ERROR
+        ===================================================== */}
+
+        {errorMessage && (
+          <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+
+            <div>
+              <div className="font-bold">
+                AI matching failed
               </div>
-            </div>
-          )}
 
-          {/* GOVERNANCE */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-            <div className="flex gap-3">
-              <ShieldIcon />
-
-              <div>
-                <h3 className="font-semibold text-slate-800">
-                  AI Matching Governance
-                </h3>
-
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  AI similarity is decision support. A high score does not
-                  prove that two materials are technically interchangeable.
-                  Engineering review is required before using a match for
-                  procurement or substitution.
-                </p>
+              <div className="mt-1">
+                {errorMessage}
               </div>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* SUMMARY CARD                                                               */
-/* -------------------------------------------------------------------------- */
-
-function SummaryCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number | string;
-}) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="rounded-lg bg-slate-100 p-2 text-slate-500">
-          {icon}
-        </div>
-      </div>
-
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-        {label}
-      </p>
-
-      <p className="mt-1 text-2xl font-bold text-slate-900">
-        {typeof value === 'number'
-          ? value.toLocaleString()
-          : value}
-      </p>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* COMPANY DATA CARD                                                          */
-/* -------------------------------------------------------------------------- */
-
-function CompanyDataCard({
-  company,
-  count,
-}: {
-  company: string;
-  count: number;
-}) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
-        <Building2 className="h-5 w-5 text-slate-500" />
-
-        <span className="rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700">
-          Available
-        </span>
-      </div>
-
-      <p className="text-sm font-semibold text-slate-900">
-        {company}
-      </p>
-
-      <p className="mt-1 text-2xl font-bold text-slate-900">
-        {count.toLocaleString()}
-      </p>
-
-      <p className="text-xs text-slate-500">
-        material records
-      </p>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* MATCH CARD                                                                 */
-/* -------------------------------------------------------------------------- */
-
-function MatchCard({
-  rank,
-  result,
-  overallBest,
-}: {
-  rank: number;
-  result: CompanyMatch;
-  overallBest: boolean;
-}) {
-  if (!result.material) {
-    return null;
-  }
-
-  const scoreClass =
-    result.score >= 80
-      ? 'text-green-700'
-      : result.score >= 60
-      ? 'text-amber-700'
-      : 'text-slate-700';
-
-  const barClass =
-    result.score >= 80
-      ? 'bg-green-500'
-      : result.score >= 60
-      ? 'bg-amber-500'
-      : 'bg-slate-400';
-
-  return (
-    <div
-      className={`overflow-hidden rounded-xl border bg-white shadow-sm ${
-        overallBest
-          ? 'border-green-300 ring-1 ring-green-100'
-          : 'border-slate-200'
-      }`}
-    >
-      <div className="border-b border-slate-200 p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              {overallBest ? (
-                <Trophy className="h-5 w-5 text-green-600" />
-              ) : (
-                <Building2 className="h-5 w-5 text-slate-500" />
-              )}
-
-              <h3 className="text-lg font-bold text-slate-900">
-                {result.company}
-              </h3>
-            </div>
-
-            <p className="mt-1 text-xs text-slate-500">
-              Company Rank #{rank}
-            </p>
-          </div>
-
-          <div className="text-right">
-            <p className={`text-3xl font-bold ${scoreClass}`}>
-              {result.score}%
-            </p>
-
-            <p className="text-xs text-slate-400">
-              AI similarity
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
-          <div
-            className={`h-full rounded-full transition-all ${barClass}`}
-            style={{
-              width: `${Math.min(
-                result.score,
-                100
-              )}%`,
-            }}
-          />
-        </div>
-      </div>
-
-      <div className="space-y-4 p-4">
-        <DetailRow
-          icon={
-            <Tag className="h-4 w-4" />
-          }
-          label="Material Number"
-          value={
-            result.material
-              .material_number ||
-            'N/A'
-          }
-        />
-
-        <DetailRow
-          icon={
-            <FileText className="h-4 w-4" />
-          }
-          label="Description"
-          value={
-            result.material
-              .description ||
-            'N/A'
-          }
-        />
-
-        <DetailRow
-          icon={
-            <SlidersHorizontal className="h-4 w-4" />
-          }
-          label="Specifications"
-          value={
-            result.material
-              .specifications ||
-            'N/A'
-          }
-        />
-
-        <DetailRow
-          icon={
-            <Tag className="h-4 w-4" />
-          }
-          label="Category"
-          value={
-            result.material
-              .category ||
-            'N/A'
-          }
-        />
-
-        {/* MATCHED FIELDS */}
-        <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Matched Fields
-          </p>
-
-          {result.matchedFields.length >
-          0 ? (
-            <div className="flex flex-wrap gap-2">
-              {result.matchedFields.map(
-                (field) => (
-                  <span
-                    key={field}
-                    className="rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700"
-                  >
-                    {field}
-                  </span>
-                )
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-slate-500">
-              No strong field matches returned.
-            </p>
-          )}
-        </div>
-
-        {/* TECHNICAL MATCHES */}
-        {result.matchedSpecifications
-          .length > 0 && (
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Matching Technical Values
-            </p>
-
-            <div className="flex flex-wrap gap-2">
-              {result.matchedSpecifications.map(
-                (value) => (
-                  <span
-                    key={value}
-                    className="rounded-md bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700"
-                  >
-                    {value}
-                  </span>
-                )
-              )}
             </div>
           </div>
         )}
 
-        {/* REASON */}
-        <div
-          className={`rounded-lg border p-3 ${
-            overallBest
-              ? 'border-green-200 bg-green-50'
-              : result.score >= 65
-              ? 'border-amber-200 bg-amber-50'
-              : 'border-slate-200 bg-slate-50'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {overallBest ? (
-              <Trophy className="h-4 w-4 text-green-600" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4 text-slate-500" />
+        {/* =====================================================
+            SOURCE
+        ===================================================== */}
+
+        {results?.query && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-600">
+                  SOURCE MATERIAL
+                </div>
+
+                <h2 className="mt-1 text-lg font-black text-slate-900">
+                  {results.query.material_number ||
+                    results.query.description ||
+                    "Direct specification query"}
+                </h2>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                  {results.mode ===
+                  "MATERIAL"
+                    ? "DATABASE MATERIAL"
+                    : "DIRECT QUERY"}
+                </span>
+
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                  Gemini Embeddings • 768D
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-xl bg-slate-50 p-4">
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  Company
+                </div>
+                <div className="mt-1 font-bold text-slate-900">
+                  {companyName(
+                    results.query
+                      .company
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-50 p-4">
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  Category
+                </div>
+                <div className="mt-1 font-bold text-slate-900">
+                  {results.query.category ||
+                    "Not classified"}
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-50 p-4">
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  Matches
+                </div>
+                <div className="mt-1 font-mono text-xl font-black text-slate-900">
+                  {results.count ||
+                    0}
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-50 p-4">
+                <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  AI Model
+                </div>
+                <div className="mt-1 font-bold text-slate-900">
+                  {results.embedding
+                    ?.model ||
+                    "Gemini"}
+                </div>
+              </div>
+            </div>
+
+            {results.query.description && (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Description
+                </div>
+
+                <p className="mt-1 text-sm leading-6 text-slate-700">
+                  {results.query.description}
+                </p>
+              </div>
             )}
+          </section>
+        )}
 
-            <p className="text-sm font-semibold text-slate-800">
-              {overallBest
-                ? 'Overall Closest Match'
-                : 'Qualifying AI Match'}
-            </p>
-          </div>
+        {/* =====================================================
+            COMPANY BEST MATCHES
+        ===================================================== */}
 
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            {result.reason}
-          </p>
-        </div>
+        {results && (
+          <section className="space-y-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-600">
+                  SEMANTIC ENGINE RESULTS
+                </div>
+
+                <h2 className="text-2xl font-black tracking-tight text-slate-900">
+                  BEST MATCHES
+                </h2>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Highest semantic similarity found for
+                  each major CPSE.
+                </p>
+              </div>
+
+              <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-mono font-bold text-slate-500 shadow-sm">
+                VECTOR SEARCH • COSINE SIMILARITY
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {companyResults
+                .filter(
+                  (result) =>
+                    TARGET_COMPANIES.includes(
+                      companyName(
+                        result.company
+                      )
+                    )
+                )
+                .map(
+                  (
+                    result,
+                    index
+                  ) => {
+                    const isNoMatch =
+                      result.recommendation ===
+                      "NO_MATCH";
+
+                    return (
+                      <motion.div
+                        key={
+                          result.company ||
+                          index
+                        }
+                        initial={{
+                          opacity: 0,
+                          y: 8,
+                        }}
+                        animate={{
+                          opacity: 1,
+                          y: 0,
+                        }}
+                        transition={{
+                          delay:
+                            index *
+                            0.04,
+                        }}
+                        className={`rounded-2xl border bg-white p-5 shadow-sm transition ${
+                          isNoMatch
+                            ? "border-slate-200"
+                            : "border-slate-200 hover:-translate-y-0.5 hover:shadow-md"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-xs font-black text-white">
+                              {companyName(
+                                result.company
+                              ).slice(
+                                0,
+                                3
+                              )}
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="text-sm font-black text-slate-900">
+                                {companyName(
+                                  result.company
+                                )}
+                              </div>
+
+                              <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                                CPSE MATCH
+                              </div>
+                            </div>
+                          </div>
+
+                          {isNoMatch ? (
+                            <XCircle className="h-5 w-5 text-slate-300" />
+                          ) : (
+                            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                          )}
+                        </div>
+
+                        {isNoMatch ? (
+                          <div className="mt-5 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-center">
+                            <div className="text-sm font-bold text-slate-500">
+                              No sufficiently close match
+                            </div>
+
+                            <div className="mt-1 text-[11px] text-slate-400">
+                              No result reached the current
+                              confidence threshold.
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="mt-5 flex items-end justify-between">
+                              <div>
+                                <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                                  Similarity
+                                </div>
+
+                                <div className="mt-1 font-mono text-3xl font-black text-emerald-600">
+                                  {
+                                    result.similarity_percent
+                                  }
+                                  %
+                                </div>
+                              </div>
+
+                              <span
+                                className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${recommendationClasses(
+                                  result.recommendation
+                                )}`}
+                              >
+                                {recommendationLabel(
+                                  result.recommendation
+                                )}
+                              </span>
+                            </div>
+
+                            <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+                              <div
+                                className="h-full rounded-full bg-emerald-500 transition-all"
+                                style={{
+                                  width: `${Math.min(
+                                    100,
+                                    Math.max(
+                                      0,
+                                      result.similarity_percent
+                                    )
+                                  )}%`,
+                                }}
+                              />
+                            </div>
+
+                            <div className="mt-5 rounded-xl bg-slate-50 p-4">
+                              <div className="font-mono text-xs font-black text-slate-900">
+                                {result.material_number ||
+                                  `Material ID ${result.material_id}`}
+                              </div>
+
+                              <div className="mt-1 text-sm leading-5 text-slate-700">
+                                {result.description ||
+                                  "No description available."}
+                              </div>
+
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {result.category && (
+                                  <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                                    {result.category}
+                                  </span>
+                                )}
+
+                                <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[9px] font-mono font-bold text-slate-500">
+                                  ID {result.material_id}
+                                </span>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </motion.div>
+                    );
+                  }
+                )}
+            </div>
+          </section>
+        )}
+
+        {/* =====================================================
+            ALL MATCHES
+        ===================================================== */}
+
+        {results &&
+          results.matches &&
+          results.matches.length >
+            0 && (
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-5 w-5 text-indigo-600" />
+
+                  <div>
+                    <h3 className="font-black text-slate-900">
+                      Ranked Semantic Matches
+                    </h3>
+
+                    <p className="text-[11px] text-slate-500">
+                      Complete vector search result set.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[850px] text-left">
+                  <thead className="bg-slate-50">
+                    <tr className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <th className="px-5 py-3">
+                        Rank
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Company
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Material
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Description
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Similarity
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Decision
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100">
+                    {results.matches.map(
+                      (
+                        match
+                      ) => (
+                        <tr
+                          key={`${match.material_id}-${match.rank}`}
+                          className="hover:bg-slate-50"
+                        >
+                          <td className="px-5 py-4 font-mono text-xs font-black text-slate-900">
+                            #
+                            {
+                              match.rank
+                            }
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <span className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-[10px] font-black text-white">
+                              {companyName(
+                                match.company
+                              )}
+                            </span>
+                          </td>
+
+                          <td className="px-5 py-4 font-mono text-xs font-bold text-slate-800">
+                            {match.material_number ||
+                              `ID ${match.material_id}`}
+                          </td>
+
+                          <td className="max-w-md px-5 py-4 text-xs leading-5 text-slate-600">
+                            {match.description ||
+                              "—"}
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <div className="font-mono text-sm font-black text-emerald-600">
+                              {
+                                match.similarity_percent
+                              }
+                              %
+                            </div>
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <span
+                              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${recommendationClasses(
+                                match.recommendation
+                              )}`}
+                            >
+                              {match.recommendation ===
+                              "LIKELY_MATCH" ? (
+                                <CheckCircle2 className="h-3 w-3" />
+                              ) : match.recommendation ===
+                                "NO_MATCH" ? (
+                                <XCircle className="h-3 w-3" />
+                              ) : (
+                                <AlertTriangle className="h-3 w-3" />
+                              )}
+
+                              {recommendationLabel(
+                                match.recommendation
+                              )}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+        {/* =====================================================
+            EMPTY
+        ===================================================== */}
+
+        {!results &&
+          !isSearching && (
+            <section className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50">
+                <Sparkles className="h-7 w-7 text-emerald-600" />
+              </div>
+
+              <h3 className="mt-4 text-lg font-black text-slate-900">
+                Ready for material harmonization
+              </h3>
+
+              <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+                Enter a material code, description, and/or
+                technical specification. The backend will create
+                a Gemini embedding and search the national
+                material vector index.
+              </p>
+            </section>
+          )}
       </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* DETAIL ROW                                                                 */
-/* -------------------------------------------------------------------------- */
-
-function DetailRow({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div>
-      <div className="mb-1 flex items-center gap-2 text-slate-400">
-        {icon}
-
-        <p className="text-xs font-semibold uppercase tracking-wide">
-          {label}
-        </p>
-      </div>
-
-      <p className="break-words text-sm leading-6 text-slate-700">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* SHIELD ICON                                                                */
-/* -------------------------------------------------------------------------- */
-
-function ShieldIcon() {
-  return (
-    <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-600">
-      ✓
     </div>
   );
 }

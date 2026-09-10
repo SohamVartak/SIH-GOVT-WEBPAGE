@@ -1,568 +1,858 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { GoogleGenAI } from "@google/genai";
 
 export const runtime = "nodejs";
+
+const EMBEDDING_MODEL = "gemini-embedding-2";
+const EMBEDDING_DIMENSIONS = 768;
+const MAX_MATCHES = 100;
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url) {
-    throw new Error("NEXT_PUBLIC_SUPABASE_URL is missing.");
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL is missing."
+    );
   }
 
   if (!key) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY is missing.");
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is missing."
+    );
   }
 
-  return createClient(url, key);
+  return createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
 }
 
-/* ============================================================
-   GET
-   Returns migration records + summary
-============================================================ */
+function getGemini() {
+  const key = process.env.GEMINI_API_KEY;
 
-export async function GET(request) {
-  try {
-    const supabase = getSupabase();
-
-    const { searchParams } = new URL(request.url);
-
-    const status =
-      searchParams.get("status") || null;
-
-    const company =
-      searchParams.get("company") || null;
-
-    let query = supabase
-      .from("material_migration_map")
-      .select(`
-        migration_id,
-        material_id,
-        ncs_id,
-        cpse_company,
-        legacy_material_number,
-        legacy_description,
-        national_material_code,
-        migration_status,
-        mapping_method,
-        confidence,
-        source_system,
-        target_system,
-        reviewed_by,
-        reviewed_at,
-        comments,
-        created_at,
-        updated_at
-      `)
-      .order("migration_id", {
-        ascending: false,
-      });
-
-    if (status) {
-      query = query.eq(
-        "migration_status",
-        status
-      );
-    }
-
-    if (company) {
-      query = query.eq(
-        "cpse_company",
-        company
-      );
-    }
-
-    const {
-      data,
-      error,
-    } = await query;
-
-    if (error) {
-      throw new Error(
-        `Failed to load migration records: ${error.message}`
-      );
-    }
-
-    const records = data || [];
-
-    const summary = {
-      total: records.length,
-
-      pending: records.filter(
-        (row) =>
-          row.migration_status ===
-          "PENDING"
-      ).length,
-
-      ai_proposed: records.filter(
-        (row) =>
-          row.migration_status ===
-          "AI_PROPOSED"
-      ).length,
-
-      under_review: records.filter(
-        (row) =>
-          row.migration_status ===
-          "UNDER_REVIEW"
-      ).length,
-
-      approved: records.filter(
-        (row) =>
-          row.migration_status ===
-          "APPROVED"
-      ).length,
-
-      rejected: records.filter(
-        (row) =>
-          row.migration_status ===
-          "REJECTED"
-      ).length,
-
-      migrated: records.filter(
-        (row) =>
-          row.migration_status ===
-          "MIGRATED"
-      ).length,
-    };
-
-    return NextResponse.json({
-      success: true,
-      summary,
-      count: records.length,
-      records,
-    });
-  } catch (error) {
-    console.error(
-      "Material migration GET error:",
-      error
+  if (!key) {
+    throw new Error(
+      "GEMINI_API_KEY is missing."
     );
+  }
 
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "Failed to load material migration records.",
-        details:
-          error?.message ||
-          String(error),
+  return new GoogleGenAI({
+    apiKey: key,
+  });
+}
+
+function safeText(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+
+  return String(value);
+}
+
+function normalizeText(value) {
+  return safeText(value)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildMaterialSearchText(material) {
+  return [
+    `company: ${normalizeText(material.company)}`,
+    `material number: ${normalizeText(
+      material.material_number
+    )}`,
+    `description: ${normalizeText(
+      material.description
+    )}`,
+    `category: ${normalizeText(
+      material.category
+    )}`,
+    `specifications: ${normalizeText(
+      material.specifications
+    )}`,
+  ]
+    .filter(
+      (value) => value.trim() !== ""
+    )
+    .join("\n");
+}
+
+function buildQuerySearchText({
+  company,
+  materialNumber,
+  description,
+  specifications,
+  category,
+}) {
+  return [
+    company
+      ? `company: ${normalizeText(company)}`
+      : "",
+
+    materialNumber
+      ? `material number: ${normalizeText(
+          materialNumber
+        )}`
+      : "",
+
+    description
+      ? `description: ${normalizeText(
+          description
+        )}`
+      : "",
+
+    category
+      ? `category: ${normalizeText(category)}`
+      : "",
+
+    specifications
+      ? `specifications: ${normalizeText(
+          specifications
+        )}`
+      : "",
+  ]
+    .filter(
+      (value) => value.trim() !== ""
+    )
+    .join("\n");
+}
+
+async function generateEmbedding(text) {
+  const ai = getGemini();
+
+  const response =
+    await ai.models.embedContent({
+      model: EMBEDDING_MODEL,
+      contents: text,
+      config: {
+        outputDimensionality:
+          EMBEDDING_DIMENSIONS,
       },
-      { status: 500 }
+    });
+
+  const embedding =
+    response?.embeddings?.[0]?.values;
+
+  if (!Array.isArray(embedding)) {
+    throw new Error(
+      "Gemini did not return an embedding."
     );
   }
+
+  if (
+    embedding.length !==
+    EMBEDDING_DIMENSIONS
+  ) {
+    throw new Error(
+      `Invalid embedding dimensions. Expected ${EMBEDDING_DIMENSIONS}, received ${embedding.length}.`
+    );
+  }
+
+  return embedding;
 }
 
-/* ============================================================
-   POST
-   Creates a migration mapping
-============================================================ */
+function normalizeSimilarity(value) {
+  const numeric = Number(value ?? 0);
+
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+
+  return Math.max(
+    0,
+    Math.min(1, numeric)
+  );
+}
+
+function groupBestMatchesByCompany(
+  matches
+) {
+  const map = new Map();
+
+  for (const match of matches) {
+    const company =
+      normalizeText(
+        match.company
+      ) || "Unknown";
+
+    const existing =
+      map.get(company);
+
+    if (
+      !existing ||
+      match.similarity >
+        existing.similarity
+    ) {
+      map.set(company, match);
+    }
+  }
+
+  return Array.from(
+    map.values()
+  ).sort(
+    (a, b) =>
+      b.similarity -
+      a.similarity
+  );
+}
 
 export async function POST(request) {
   try {
-    const supabase = getSupabase();
+    const supabase =
+      getSupabase();
 
     const body =
       await request
         .json()
         .catch(() => ({}));
+
+    const rawMaterialId =
+      body?.materialId;
 
     const materialId =
-      body.materialId
-        ? Number(body.materialId)
+      rawMaterialId !== undefined &&
+      rawMaterialId !== null &&
+      String(rawMaterialId).trim() !== ""
+        ? Number(rawMaterialId)
         : null;
 
-    const ncsId =
-      body.ncsId
-        ? Number(body.ncsId)
-        : null;
-
-    const cpseCompany =
-      String(
-        body.cpseCompany || ""
-      ).trim();
-
-    const legacyMaterialNumber =
-      String(
-        body.legacyMaterialNumber ||
-          ""
-      ).trim();
-
-    const legacyDescription =
-      String(
-        body.legacyDescription ||
-          ""
-      ).trim();
-
-    const nationalMaterialCode =
-      String(
-        body.nationalMaterialCode ||
-          ""
-      ).trim();
-
-    const migrationStatus =
-      String(
-        body.migrationStatus ||
-          "PENDING"
-      ).trim();
-
-    const mappingMethod =
-      String(
-        body.mappingMethod ||
-          "MANUAL"
-      ).trim();
-
-    const confidence =
-      body.confidence !==
-        undefined &&
-      body.confidence !== null
-        ? Number(body.confidence)
-        : null;
-
-    const sourceSystem =
-      String(
-        body.sourceSystem ||
-          "LEGACY_ERP"
-      ).trim();
-
-    const targetSystem =
-      String(
-        body.targetSystem ||
-          "NATIONAL_MATERIAL_MASTER"
-      ).trim();
-
-    const comments =
-      String(
-        body.comments || ""
-      ).trim();
-
-    if (!cpseCompany) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "cpseCompany is required.",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!legacyMaterialNumber) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "legacyMaterialNumber is required.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const allowedStatuses = [
-      "PENDING",
-      "AI_PROPOSED",
-      "UNDER_REVIEW",
-      "APPROVED",
-      "REJECTED",
-      "MIGRATED",
-    ];
-
-    if (
-      !allowedStatuses.includes(
-        migrationStatus
-      )
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            `Invalid migrationStatus. Allowed values: ${allowedStatuses.join(
-              ", "
-            )}`,
-        },
-        { status: 400 }
-      );
-    }
-
-    if (
-      confidence !== null &&
-      (!Number.isFinite(confidence) ||
-        confidence < 0 ||
-        confidence > 100)
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "confidence must be between 0 and 100.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const insertPayload = {
-      material_id:
-        Number.isInteger(materialId) &&
-        materialId > 0
-          ? materialId
-          : null,
-
-      ncs_id:
-        Number.isInteger(ncsId) &&
-        ncsId > 0
-          ? ncsId
-          : null,
-
-      cpse_company:
-        cpseCompany,
-
-      legacy_material_number:
-        legacyMaterialNumber,
-
-      legacy_description:
-        legacyDescription || null,
-
-      national_material_code:
-        nationalMaterialCode || null,
-
-      migration_status:
-        migrationStatus,
-
-      mapping_method:
-        mappingMethod,
-
-      confidence,
-
-      source_system:
-        sourceSystem,
-
-      target_system:
-        targetSystem,
-
-      comments:
-        comments || null,
-    };
-
-    const {
-      data,
-      error,
-    } = await supabase
-      .from(
-        "material_migration_map"
-      )
-      .insert(
-        insertPayload
-      )
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(
-        `Failed to create migration mapping: ${error.message}`
-      );
-    }
-
-    return NextResponse.json(
-      {
-        success: true,
-        message:
-          "Migration mapping created successfully.",
-        record: data,
-      },
-      { status: 201 }
-    );
-  } catch (error) {
-    console.error(
-      "Material migration POST error:",
-      error
-    );
-
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "Failed to create material migration mapping.",
-        details:
-          error?.message ||
-          String(error),
-      },
-      { status: 500 }
-    );
-  }
-}
-
-/* ============================================================
-   PATCH
-   Updates review / migration status
-============================================================ */
-
-export async function PATCH(request) {
-  try {
-    const supabase = getSupabase();
-
-    const body =
-      await request
-        .json()
-        .catch(() => ({}));
-
-    const migrationId =
-      Number(
-        body.migrationId
-      );
-
-    const migrationStatus =
-      String(
-        body.migrationStatus ||
-          ""
-      ).trim();
-
-    const nationalMaterialCode =
-      body.nationalMaterialCode !==
+    const matchCount =
+      body?.matchCount !==
       undefined
-        ? String(
-            body.nationalMaterialCode ||
-              ""
-          ).trim()
-        : undefined;
+        ? Number(
+            body.matchCount
+          )
+        : 10;
 
-    const reviewer =
-      body.reviewedBy !==
-      undefined
-        ? String(
-            body.reviewedBy ||
-              ""
-          ).trim()
-        : undefined;
+    const company =
+      normalizeText(
+        body?.company
+      );
 
-    const comments =
-      body.comments !==
-      undefined
-        ? String(
-            body.comments ||
-              ""
-          ).trim()
-        : undefined;
+    const materialNumber =
+      normalizeText(
+        body?.materialNumber
+      );
+
+    const description =
+      normalizeText(
+        body?.description
+      );
+
+    const specifications =
+      normalizeText(
+        body?.specifications
+      );
+
+    const category =
+      normalizeText(
+        body?.category
+      );
 
     if (
       !Number.isInteger(
-        migrationId
+        matchCount
       ) ||
-      migrationId <= 0
+      matchCount < 1 ||
+      matchCount > MAX_MATCHES
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "A valid migrationId is required.",
+            `matchCount must be between 1 and ${MAX_MATCHES}.`,
         },
         { status: 400 }
       );
     }
 
-    const allowedStatuses = [
-      "PENDING",
-      "AI_PROPOSED",
-      "UNDER_REVIEW",
-      "APPROVED",
-      "REJECTED",
-      "MIGRATED",
-    ];
+    const usingMaterial =
+      Number.isInteger(
+        materialId
+      ) &&
+      materialId > 0;
+
+    const usingQuery =
+      Boolean(
+        company ||
+          materialNumber ||
+          description ||
+          specifications ||
+          category
+      );
 
     if (
-      !allowedStatuses.includes(
-        migrationStatus
-      )
+      !usingMaterial &&
+      !usingQuery
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "A valid migrationStatus is required.",
+            "Provide a materialId or a material/specification query.",
         },
         { status: 400 }
       );
     }
 
-    const updateData = {
-      migration_status:
-        migrationStatus,
+    /* =====================================================
+       SOURCE
+    ===================================================== */
 
-      updated_at:
-        new Date().toISOString(),
-    };
+    let sourceMaterial =
+      null;
 
-    if (
-      nationalMaterialCode !==
-      undefined
-    ) {
-      updateData.national_material_code =
-        nationalMaterialCode ||
-        null;
+    let sourceEmbedding =
+      null;
+
+    let excludeMaterialId =
+      null;
+
+    let sourceSearchText =
+      "";
+
+    /* =====================================================
+       MODE 1:
+       EXISTING MATERIAL
+    ===================================================== */
+
+    if (usingMaterial) {
+      const {
+        data: material,
+        error:
+          materialError,
+      } =
+        await supabase
+          .from("materials")
+          .select(
+            `
+            id,
+            company,
+            material_number,
+            description,
+            specifications,
+            category
+            `
+          )
+          .eq(
+            "id",
+            materialId
+          )
+          .single();
+
+      if (
+        materialError ||
+        !material
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Source material not found.",
+            material_id:
+              materialId,
+            details:
+              materialError?.message ||
+              null,
+          },
+          { status: 404 }
+        );
+      }
+
+      sourceMaterial =
+        material;
+
+      excludeMaterialId =
+        material.id;
+
+      /*
+       * First try stored embedding.
+       */
+
+      const {
+        data:
+          storedEmbedding,
+      } =
+        await supabase
+          .from(
+            "material_embeddings"
+          )
+          .select(
+            `
+            material_id,
+            embedding,
+            search_text
+            `
+          )
+          .eq(
+            "material_id",
+            material.id
+          )
+          .maybeSingle();
+
+      if (
+        storedEmbedding &&
+        Array.isArray(
+          storedEmbedding.embedding
+        ) &&
+        storedEmbedding.embedding.length ===
+          EMBEDDING_DIMENSIONS
+      ) {
+        sourceEmbedding =
+          storedEmbedding.embedding;
+
+        sourceSearchText =
+          storedEmbedding.search_text ||
+          buildMaterialSearchText(
+            material
+          );
+      }
+
+      /*
+       * Generate one if missing.
+       */
+
+      if (!sourceEmbedding) {
+        sourceSearchText =
+          buildMaterialSearchText(
+            material
+          );
+
+        if (
+          !sourceSearchText
+        ) {
+          throw new Error(
+            "Source material contains no searchable information."
+          );
+        }
+
+        sourceEmbedding =
+          await generateEmbedding(
+            sourceSearchText
+          );
+
+        const {
+          error:
+            embeddingSaveError,
+        } =
+          await supabase
+            .from(
+              "material_embeddings"
+            )
+            .upsert(
+              {
+                material_id:
+                  material.id,
+
+                embedding:
+                  sourceEmbedding,
+
+                search_text:
+                  sourceSearchText,
+
+                updated_at:
+                  new Date().toISOString(),
+              },
+              {
+                onConflict:
+                  "material_id",
+              }
+            );
+
+        if (
+          embeddingSaveError
+        ) {
+          throw new Error(
+            `Failed to store source embedding: ${embeddingSaveError.message}`
+          );
+        }
+      }
     }
 
-    if (
-      reviewer !==
-      undefined
-    ) {
-      updateData.reviewed_by =
-        reviewer ||
-        null;
+    /* =====================================================
+       MODE 2:
+       DIRECT QUERY
+    ===================================================== */
 
-      updateData.reviewed_at =
-        new Date().toISOString();
+    else {
+      sourceSearchText =
+        buildQuerySearchText({
+          company,
+          materialNumber,
+          description,
+          specifications,
+          category,
+        });
+
+      if (
+        !sourceSearchText
+      ) {
+        throw new Error(
+          "Query contains no searchable information."
+        );
+      }
+
+      sourceEmbedding =
+        await generateEmbedding(
+          sourceSearchText
+        );
+
+      sourceMaterial = {
+        id: null,
+        company:
+          company || null,
+        material_number:
+          materialNumber || null,
+        description:
+          description || null,
+        specifications:
+          specifications || null,
+        category:
+          category || null,
+      };
     }
 
-    if (
-      comments !==
-      undefined
-    ) {
-      updateData.comments =
-        comments || null;
-    }
+    /* =====================================================
+       VECTOR SEARCH
+    ===================================================== */
 
     const {
-      data,
-      error,
-    } = await supabase
-      .from(
-        "material_migration_map"
-      )
-      .update(updateData)
-      .eq(
-        "migration_id",
-        migrationId
-      )
-      .select()
-      .single();
+      data: rawMatches,
+      error:
+        matchError,
+    } =
+      await supabase.rpc(
+        "match_materials",
+        {
+          query_embedding:
+            sourceEmbedding,
 
-    if (error) {
+          match_count:
+            matchCount,
+
+          exclude_material_id:
+            excludeMaterialId,
+        }
+      );
+
+    if (
+      matchError
+    ) {
       throw new Error(
-        `Failed to update migration record: ${error.message}`
+        `Vector search failed: ${matchError.message}`
       );
     }
+
+    const vectorMatches =
+      Array.isArray(
+        rawMatches
+      )
+        ? rawMatches
+        : [];
+
+    const matchIds =
+      vectorMatches
+        .map(
+          (row) =>
+            Number(
+              row.material_id
+            )
+        )
+        .filter(
+          (id) =>
+            Number.isInteger(
+              id
+            ) &&
+            id > 0
+        );
+
+    /* =====================================================
+       LOAD MATCHED MATERIAL DATA
+    ===================================================== */
+
+    let matchedMaterials =
+      [];
+
+    if (
+      matchIds.length >
+      0
+    ) {
+      const {
+        data,
+        error,
+      } =
+        await supabase
+          .from("materials")
+          .select(
+            `
+            id,
+            company,
+            material_number,
+            description,
+            specifications,
+            category
+            `
+          )
+          .in(
+            "id",
+            matchIds
+          );
+
+      if (error) {
+        throw new Error(
+          `Failed to load matched materials: ${error.message}`
+        );
+      }
+
+      matchedMaterials =
+        data || [];
+    }
+
+    const materialMap =
+      new Map();
+
+    for (
+      const material of matchedMaterials
+    ) {
+      materialMap.set(
+        Number(material.id),
+        material
+      );
+    }
+
+    /* =====================================================
+       FORMAT RESULTS
+    ===================================================== */
+
+    const matches =
+      vectorMatches.map(
+        (row, index) => {
+          const id =
+            Number(
+              row.material_id
+            );
+
+          const material =
+            materialMap.get(
+              id
+            );
+
+          const similarity =
+            normalizeSimilarity(
+              row.similarity ??
+                row.score
+            );
+
+          return {
+            rank:
+              index + 1,
+
+            material_id:
+              id,
+
+            company:
+              material?.company ||
+              null,
+
+            material_number:
+              material?.material_number ||
+              null,
+
+            description:
+              material?.description ||
+              null,
+
+            category:
+              material?.category ||
+              null,
+
+            similarity,
+
+            similarity_percent:
+              Number(
+                (
+                  similarity *
+                  100
+                ).toFixed(2)
+              ),
+
+            recommendation:
+              similarity >= 0.85
+                ? "LIKELY_MATCH"
+                : similarity >= 0.65
+                  ? "REVIEW"
+                  : "LOW_CONFIDENCE",
+          };
+        }
+      );
+
+    /* =====================================================
+       COMPANY BEST MATCHES
+    ===================================================== */
+
+    const bestMatchByCompany =
+      groupBestMatchesByCompany(
+        matches
+      );
+
+    /* =====================================================
+       ALL IMPORTANT COMPANIES
+    ===================================================== */
+
+    const knownCompanies = [
+      "IOCL",
+      "BPCL",
+      "HPCL",
+      "BHEL",
+      "ONGC",
+      "NTPC",
+      "SAIL",
+      "GAIL",
+      "CIL",
+      "CPCL",
+    ];
+
+    const companyMatchMap =
+      new Map(
+        bestMatchByCompany.map(
+          (match) => [
+            match.company
+              ?.trim()
+              .toUpperCase(),
+            match,
+          ]
+        )
+      );
+
+    const companyResults =
+      knownCompanies.map(
+        (companyName) => {
+          const match =
+            companyMatchMap.get(
+              companyName
+            );
+
+          if (match) {
+            return match;
+          }
+
+          return {
+            rank: null,
+
+            material_id:
+              null,
+
+            company:
+              companyName,
+
+            material_number:
+              null,
+
+            description:
+              null,
+
+            category:
+              null,
+
+            similarity:
+              0,
+
+            similarity_percent:
+              0,
+
+            recommendation:
+              "NO_MATCH",
+          };
+        }
+      );
 
     return NextResponse.json({
       success: true,
-      message:
-        "Migration record updated successfully.",
-      record: data,
+
+      mode:
+        usingMaterial
+          ? "MATERIAL"
+          : "QUERY",
+
+      query: {
+        material_id:
+          sourceMaterial.id,
+
+        company:
+          sourceMaterial.company,
+
+        material_number:
+          sourceMaterial.material_number,
+
+        description:
+          sourceMaterial.description,
+
+        category:
+          sourceMaterial.category,
+
+        specifications:
+          sourceMaterial.specifications,
+
+        search_text:
+          sourceSearchText,
+      },
+
+      embedding: {
+        model:
+          EMBEDDING_MODEL,
+
+        dimensions:
+          EMBEDDING_DIMENSIONS,
+
+        generated:
+          true,
+      },
+
+      count:
+        matches.length,
+
+      matches,
+
+      best_match_by_company:
+        bestMatchByCompany,
+
+      company_results:
+        companyResults,
     });
   } catch (error) {
     console.error(
-      "Material migration PATCH error:",
+      "Semantic search error:",
       error
     );
 
     return NextResponse.json(
       {
         success: false,
+
         error:
-          "Failed to update material migration record.",
+          "Semantic search failed.",
+
         details:
-          error?.message ||
-          String(error),
+          error instanceof Error
+            ? error.message
+            : String(error),
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }

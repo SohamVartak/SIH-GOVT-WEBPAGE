@@ -44,11 +44,16 @@ interface AuditResponse {
 }
 
 function safeText(value: unknown): string {
-  if (
-    value === null ||
-    value === undefined
-  ) {
+  if (value === null || value === undefined) {
     return '';
+  }
+
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '';
+    }
   }
 
   return String(value);
@@ -73,10 +78,9 @@ function formatDate(value: string | null) {
 }
 
 function getActionLabel(action: string) {
-  const normalized =
-    safeText(action)
-      .trim()
-      .toUpperCase();
+  const normalized = safeText(action)
+    .trim()
+    .toUpperCase();
 
   switch (normalized) {
     case 'APPROVE':
@@ -96,10 +100,9 @@ function getActionLabel(action: string) {
 function getActionBadgeStatus(
   action: string
 ): 'success' | 'warning' | 'danger' | 'primary' | 'neutral' {
-  const normalized =
-    safeText(action)
-      .trim()
-      .toUpperCase();
+  const normalized = safeText(action)
+    .trim()
+    .toUpperCase();
 
   if (normalized === 'APPROVE') {
     return 'success';
@@ -109,25 +112,20 @@ function getActionBadgeStatus(
     return 'danger';
   }
 
-  if (
-    normalized === 'NEEDS_MORE_DATA'
-  ) {
+  if (normalized === 'NEEDS_MORE_DATA') {
     return 'warning';
   }
 
   return 'neutral';
 }
 
-function createAuditReference(
-  log: AuditLog
-) {
-  return `AUD-${String(
-    log.audit_id
-  ).padStart(6, '0')}`;
+function createAuditReference(log: AuditLog) {
+  return `AUD-${String(log.audit_id).padStart(6, '0')}`;
 }
 
 export const AuditCenterView: React.FC = () => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
+
   const [summary, setSummary] =
     useState<AuditResponse['summary']>({
       total: 0,
@@ -171,14 +169,13 @@ export const AuditCenterView: React.FC = () => {
 
       setError(null);
 
-      const response =
-        await fetch(
-          '/api/audit-log',
-          {
-            method: 'GET',
-            cache: 'no-store'
-          }
-        );
+      const response = await fetch(
+        '/api/audit-log',
+        {
+          method: 'GET',
+          cache: 'no-store'
+        }
+      );
 
       const result =
         (await response.json()) as AuditResponse;
@@ -233,6 +230,7 @@ export const AuditCenterView: React.FC = () => {
       );
 
       setLogs([]);
+
       setSummary({
         total: 0,
         approvals: 0,
@@ -255,21 +253,16 @@ export const AuditCenterView: React.FC = () => {
 
   const filteredLogs = useMemo(() => {
     const normalizedSearch =
-      search
-        .trim()
-        .toLowerCase();
+      search.trim().toLowerCase();
 
     return logs.filter((log) => {
-      const action =
-        safeText(log.action)
-          .trim()
-          .toUpperCase();
+      const action = safeText(log.action)
+        .trim()
+        .toUpperCase();
 
       let matchesAction = true;
 
-      if (
-        actionFilter === 'Approved'
-      ) {
+      if (actionFilter === 'Approved') {
         matchesAction =
           action === 'APPROVE';
       } else if (
@@ -278,12 +271,10 @@ export const AuditCenterView: React.FC = () => {
         matchesAction =
           action === 'REJECT';
       } else if (
-        actionFilter ===
-        'Needs More Data'
+        actionFilter === 'Needs More Data'
       ) {
         matchesAction =
-          action ===
-          'NEEDS_MORE_DATA';
+          action === 'NEEDS_MORE_DATA';
       }
 
       if (!matchesAction) {
@@ -347,10 +338,10 @@ export const AuditCenterView: React.FC = () => {
           null
         );
       }, 2000);
-    } catch (error) {
+    } catch (copyError) {
       console.error(
         'Copy failed:',
-        error
+        copyError
       );
     }
   };
@@ -377,24 +368,26 @@ export const AuditCenterView: React.FC = () => {
       (log) =>
         [
           createAuditReference(log),
+
           log.created_at,
+
           getActionLabel(
             log.action
           ),
-          log.material_id ??
-            '',
-          log.ncs_id ??
-            '',
-          log.request_id ??
-            '',
-          log.previous_status ??
-            '',
-          log.new_status ??
-            '',
-          log.performed_by ??
-            '',
-          log.comments ??
-            ''
+
+          log.material_id ?? '',
+
+          log.ncs_id ?? '',
+
+          log.request_id ?? '',
+
+          log.previous_status ?? '',
+
+          log.new_status ?? '',
+
+          log.performed_by ?? '',
+
+          log.comments ?? ''
         ]
           .map(
             (value) =>
@@ -406,30 +399,24 @@ export const AuditCenterView: React.FC = () => {
           .join(',')
     );
 
-    const csv =
-      [
-        headers.join(','),
-        ...rows
-      ].join('\n');
+    const csv = [
+      headers.join(','),
+      ...rows
+    ].join('\n');
 
-    const blob =
-      new Blob(
-        [csv],
-        {
-          type:
-            'text/csv;charset=utf-8;'
-        }
-      );
+    const blob = new Blob(
+      [csv],
+      {
+        type:
+          'text/csv;charset=utf-8;'
+      }
+    );
 
     const url =
-      URL.createObjectURL(
-        blob
-      );
+      URL.createObjectURL(blob);
 
     const link =
-      document.createElement(
-        'a'
-      );
+      document.createElement('a');
 
     link.href = url;
 
@@ -438,17 +425,13 @@ export const AuditCenterView: React.FC = () => {
         .toISOString()
         .slice(0, 10)}.csv`;
 
-    document.body.appendChild(
-      link
-    );
+    document.body.appendChild(link);
 
     link.click();
 
     link.remove();
 
-    URL.revokeObjectURL(
-      url
-    );
+    URL.revokeObjectURL(url);
   };
 
   /* ==========================================================
@@ -475,7 +458,7 @@ export const AuditCenterView: React.FC = () => {
           </div>
 
           <h1 className="text-xl font-bold text-white tracking-tight mt-1">
-            National Audit & Governance Trail
+            National Audit &amp; Governance Trail
           </h1>
 
           <p className="text-xs text-slate-300">
@@ -522,6 +505,7 @@ export const AuditCenterView: React.FC = () => {
       ====================================================== */}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
           <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500">
             Total Events
@@ -561,6 +545,7 @@ export const AuditCenterView: React.FC = () => {
             {summary.needs_more_data}
           </div>
         </div>
+
       </div>
 
       {/* ======================================================
@@ -588,35 +573,34 @@ export const AuditCenterView: React.FC = () => {
       ====================================================== */}
 
       <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+
         <div className="flex items-center gap-1 overflow-x-auto pb-1 text-xs">
+
           {[
             'All',
             'Approved',
             'Rejected',
             'Needs More Data'
-          ].map(
-            (filter) => (
-              <button
-                key={filter}
-                onClick={() =>
-                  setActionFilter(
-                    filter
-                  )
-                }
-                className={`px-3 py-1.5 rounded-lg font-medium transition-colors whitespace-nowrap cursor-pointer ${
-                  actionFilter ===
-                  filter
-                    ? 'bg-slate-900 text-white font-bold shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {filter}
-              </button>
-            )
-          )}
+          ].map((filter) => (
+            <button
+              key={filter}
+              onClick={() =>
+                setActionFilter(filter)
+              }
+              className={`px-3 py-1.5 rounded-lg font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                actionFilter === filter
+                  ? 'bg-slate-900 text-white font-bold shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {filter}
+            </button>
+          ))}
+
         </div>
 
         <div className="relative w-full sm:w-80">
+
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
 
           <input
@@ -630,7 +614,9 @@ export const AuditCenterView: React.FC = () => {
             placeholder="Search audit ID, material, NCS, officer..."
             className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-hidden focus:border-emerald-500"
           />
+
         </div>
+
       </div>
 
       {/* ======================================================
@@ -638,7 +624,9 @@ export const AuditCenterView: React.FC = () => {
       ====================================================== */}
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+
         <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between">
+
           <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider font-mono">
             Audit Ledger ({filteredLogs.length} Events)
           </h2>
@@ -647,31 +635,38 @@ export const AuditCenterView: React.FC = () => {
             <ShieldCheck className="w-3.5 h-3.5" />
             Persistent Record
           </span>
+
         </div>
 
         {loading ? (
           <div className="p-10 text-center">
+
             <RefreshCw className="w-6 h-6 text-slate-400 animate-spin mx-auto" />
 
             <div className="text-xs text-slate-500 mt-3">
               Loading audit ledger...
             </div>
+
           </div>
         ) : filteredLogs.length === 0 ? (
           <EmptyState
-            icon={FileCheck}
+            icon={<FileCheck className="w-8 h-8" />}
             title="No audit records found"
             description={
               logs.length === 0
-                ? "No government review actions have been recorded yet."
-                : "No ledger records match the active filter or search query."
+                ? 'No government review actions have been recorded yet.'
+                : 'No ledger records match the active filter or search query.'
             }
           />
         ) : (
           <div className="overflow-x-auto">
+
             <table className="w-full text-left text-xs">
+
               <thead className="bg-slate-100/80 text-[10px] font-mono text-slate-500 uppercase border-b border-slate-200">
+
                 <tr>
+
                   <th className="p-3 font-semibold">
                     Audit ID
                   </th>
@@ -699,15 +694,15 @@ export const AuditCenterView: React.FC = () => {
                   <th className="p-3 font-semibold text-right">
                     Reference
                   </th>
+
                 </tr>
+
               </thead>
 
               <tbody className="divide-y divide-slate-100">
+
                 {filteredLogs.map(
-                  (
-                    log,
-                    index
-                  ) => {
+                  (log, index) => {
                     const isExpanded =
                       expandedRowId ===
                       log.audit_id;
@@ -723,6 +718,7 @@ export const AuditCenterView: React.FC = () => {
                           log.audit_id
                         }
                       >
+
                         <motion.tr
                           initial={{
                             opacity: 0,
@@ -735,8 +731,7 @@ export const AuditCenterView: React.FC = () => {
                           transition={{
                             duration: 0.15,
                             delay: Math.min(
-                              index *
-                                0.02,
+                              index * 0.02,
                               0.3
                             )
                           }}
@@ -749,8 +744,11 @@ export const AuditCenterView: React.FC = () => {
                           }
                           className="hover:bg-slate-50/80 transition-colors cursor-pointer"
                         >
+
                           <td className="p-3 font-mono font-bold text-slate-900">
+
                             <div className="flex items-center gap-1.5">
+
                               {isExpanded ? (
                                 <ChevronUp className="w-3 h-3 text-slate-400" />
                               ) : (
@@ -760,7 +758,9 @@ export const AuditCenterView: React.FC = () => {
                               <span>
                                 {reference}
                               </span>
+
                             </div>
+
                           </td>
 
                           <td className="p-3 text-slate-600 text-[11px] whitespace-nowrap">
@@ -770,6 +770,7 @@ export const AuditCenterView: React.FC = () => {
                           </td>
 
                           <td className="p-3">
+
                             <StatusBadge
                               status={getActionBadgeStatus(
                                 log.action
@@ -779,9 +780,11 @@ export const AuditCenterView: React.FC = () => {
                               )}
                               size="sm"
                             />
+
                           </td>
 
                           <td className="p-3">
+
                             <div className="font-semibold text-slate-800">
                               Material #
                               {log.material_id ??
@@ -793,6 +796,7 @@ export const AuditCenterView: React.FC = () => {
                               {log.ncs_id ??
                                 'N/A'}
                             </div>
+
                           </td>
 
                           <td className="p-3 text-slate-800">
@@ -801,6 +805,7 @@ export const AuditCenterView: React.FC = () => {
                           </td>
 
                           <td className="p-3 font-mono text-[10px]">
+
                             <div className="text-slate-500">
                               {log.previous_status ||
                                 '—'}
@@ -811,9 +816,11 @@ export const AuditCenterView: React.FC = () => {
                               {log.new_status ||
                                 '—'}
                             </div>
+
                           </td>
 
                           <td className="p-3 text-right">
+
                             <button
                               onClick={(
                                 event
@@ -827,6 +834,7 @@ export const AuditCenterView: React.FC = () => {
                               className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors font-mono text-[10px] cursor-pointer"
                               title="Copy audit reference"
                             >
+
                               {copiedAuditId ===
                               log.audit_id ? (
                                 <Check className="w-3.5 h-3.5 text-emerald-600" />
@@ -835,8 +843,11 @@ export const AuditCenterView: React.FC = () => {
                               )}
 
                               {reference}
+
                             </button>
+
                           </td>
+
                         </motion.tr>
 
                         {/* ==================================================
@@ -845,10 +856,12 @@ export const AuditCenterView: React.FC = () => {
 
                         {isExpanded && (
                           <tr className="bg-slate-50/90 border-b border-slate-200">
+
                             <td
                               colSpan={7}
                               className="p-4"
                             >
+
                               <motion.div
                                 initial={{
                                   opacity: 0,
@@ -858,10 +871,16 @@ export const AuditCenterView: React.FC = () => {
                                   opacity: 1,
                                   height: 'auto'
                                 }}
+                                transition={{
+                                  duration: 0.2
+                                }}
                                 className="space-y-4 text-xs"
                               >
+
                                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+
                                   <div>
+
                                     <div className="font-bold text-slate-800">
                                       Audit Transaction
                                     </div>
@@ -869,19 +888,25 @@ export const AuditCenterView: React.FC = () => {
                                     <div className="text-[10px] text-slate-500 font-mono mt-1">
                                       {reference}
                                     </div>
+
                                   </div>
 
                                   <div className="text-[10px] text-slate-500 font-mono">
+
                                     Recorded:
                                     {' '}
                                     {formatDate(
                                       log.created_at
                                     )}
+
                                   </div>
+
                                 </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+
                                   <div className="p-3 bg-white rounded-xl border border-slate-200">
+
                                     <div className="text-[10px] uppercase font-mono text-slate-400">
                                       Material ID
                                     </div>
@@ -890,9 +915,11 @@ export const AuditCenterView: React.FC = () => {
                                       {log.material_id ??
                                         'Not available'}
                                     </div>
+
                                   </div>
 
                                   <div className="p-3 bg-white rounded-xl border border-slate-200">
+
                                     <div className="text-[10px] uppercase font-mono text-slate-400">
                                       NCS ID
                                     </div>
@@ -901,9 +928,11 @@ export const AuditCenterView: React.FC = () => {
                                       {log.ncs_id ??
                                         'Not available'}
                                     </div>
+
                                   </div>
 
                                   <div className="p-3 bg-white rounded-xl border border-slate-200">
+
                                     <div className="text-[10px] uppercase font-mono text-slate-400">
                                       Request ID
                                     </div>
@@ -912,9 +941,11 @@ export const AuditCenterView: React.FC = () => {
                                       {log.request_id ??
                                         'Not available'}
                                     </div>
+
                                   </div>
 
                                   <div className="p-3 bg-white rounded-xl border border-slate-200">
+
                                     <div className="text-[10px] uppercase font-mono text-slate-400">
                                       Performed By
                                     </div>
@@ -923,15 +954,19 @@ export const AuditCenterView: React.FC = () => {
                                       {log.performed_by ||
                                         'Not specified'}
                                     </div>
+
                                   </div>
+
                                 </div>
 
                                 <div className="p-3 bg-white rounded-xl border border-slate-200">
+
                                   <div className="text-[10px] uppercase font-mono text-slate-400">
                                     Status Transition
                                   </div>
 
                                   <div className="flex items-center gap-2 mt-2 font-mono text-xs">
+
                                     <span className="px-2 py-1 rounded-lg bg-slate-100 text-slate-600">
                                       {log.previous_status ||
                                         '—'}
@@ -945,42 +980,48 @@ export const AuditCenterView: React.FC = () => {
                                       {log.new_status ||
                                         '—'}
                                     </span>
+
                                   </div>
+
                                 </div>
 
                                 {log.comments && (
                                   <div className="p-3 bg-white rounded-xl border border-slate-200">
+
                                     <div className="text-[10px] uppercase font-mono text-slate-400">
                                       Government Comments
                                     </div>
 
-                                    <div className="text-xs text-slate-700 mt-1 leading-relaxed">
+                                    <div className="text-xs text-slate-700 mt-1 leading-relaxed whitespace-pre-wrap">
                                       {log.comments}
                                     </div>
+
                                   </div>
                                 )}
 
                                 {log.metadata &&
                                   Object.keys(
                                     log.metadata
-                                  ).length >
-                                    0 && (
+                                  ).length > 0 && (
                                     <div className="p-3 bg-white rounded-xl border border-slate-200">
+
                                       <div className="text-[10px] uppercase font-mono text-slate-400 mb-2">
                                         Audit Metadata
                                       </div>
 
-                                      <pre className="text-[10px] text-slate-700 font-mono whitespace-pre-wrap break-all bg-slate-50 rounded-lg p-3">
+                                      <pre className="text-[10px] text-slate-700 font-mono whitespace-pre-wrap break-all bg-slate-50 rounded-lg p-3 overflow-auto max-h-80">
                                         {JSON.stringify(
                                           log.metadata,
                                           null,
                                           2
                                         )}
                                       </pre>
+
                                     </div>
                                   )}
 
                                 <div className="p-3 bg-slate-900 rounded-xl text-[10px] font-mono text-slate-300">
+
                                   <div className="text-white font-sans font-semibold mb-1">
                                     Database Audit Record
                                   </div>
@@ -1005,20 +1046,32 @@ export const AuditCenterView: React.FC = () => {
                                     {log.request_id ??
                                       'NULL'}
                                   </div>
+
                                 </div>
+
                               </motion.div>
+
                             </td>
+
                           </tr>
                         )}
+
                       </React.Fragment>
                     );
                   }
                 )}
+
               </tbody>
+
             </table>
+
           </div>
         )}
+
       </div>
+
     </div>
   );
 };
+
+export default AuditCenterView;
