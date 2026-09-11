@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -18,523 +19,385 @@ function getSupabase() {
   return createClient(url, key);
 }
 
-async function countTable(
-  supabase,
-  table,
-  column = "id"
-) {
-  const {
-    count,
-    error,
-  } = await supabase
-    .from(table)
-    .select(column, {
-      count: "exact",
-      head: true,
-    });
+/* ============================================================
+   SAFE COUNT
+============================================================ */
 
-  if (error) {
-    throw new Error(
-      `Failed to count ${table}: ${error.message}`
-    );
+async function countTable(supabase, table, column = "id") {
+  try {
+    const { count, error } = await supabase
+      .from(table)
+      .select(column, {
+        count: "exact",
+        head: true,
+      });
+
+    if (error) {
+      console.warn(`Count failed for ${table}:`, error.message);
+      return 0;
+    }
+
+    return count || 0;
+  } catch (error) {
+    console.warn(`Count exception for ${table}:`, error);
+    return 0;
   }
-
-  return count || 0;
 }
 
-async function countByStatus(
+/* ============================================================
+   SAFE STATUS COUNT
+============================================================ */
+
+async function countStatus(
   supabase,
   table,
-  statusColumn,
-  statuses
+  column,
+  status
 ) {
-  const result = {};
-
-  for (const status of statuses) {
-    const {
-      count,
-      error,
-    } = await supabase
+  try {
+    const { count, error } = await supabase
       .from(table)
-      .select(statusColumn, {
+      .select(column, {
         count: "exact",
         head: true,
       })
-      .eq(
-        statusColumn,
-        status
-      );
+      .eq(column, status);
 
     if (error) {
-      throw new Error(
-        `Failed to count ${table}.${statusColumn}=${status}: ${error.message}`
-      );
+      return 0;
     }
 
-    result[status] = count || 0;
+    return count || 0;
+  } catch {
+    return 0;
   }
-
-  return result;
 }
+
+/* ============================================================
+   GET
+============================================================ */
 
 export async function GET() {
   try {
     const supabase = getSupabase();
 
     /* ========================================================
-       CORE MATERIAL COUNTS
+       MATERIALS
     ======================================================== */
 
-    const totalMaterials =
-      await countTable(
-        supabase,
-        "materials",
-        "id"
-      );
+    const totalMaterials = await countTable(
+      supabase,
+      "materials",
+      "id"
+    );
 
     /* ========================================================
-       EMBEDDING COVERAGE
+       MATERIAL DETAILS
     ======================================================== */
 
-    const totalEmbeddings =
-      await countTable(
-        supabase,
-        "material_embeddings",
-        "material_id"
-      );
+    const totalMaterialDetails = await countTable(
+      supabase,
+      "material_details",
+      "id"
+    );
+
+    /* ========================================================
+       EMBEDDINGS
+    ======================================================== */
+
+    const totalEmbeddings = await countTable(
+      supabase,
+      "material_embeddings",
+      "material_id"
+    );
 
     const embeddingCoverage =
       totalMaterials > 0
         ? Number(
             (
-              (totalEmbeddings /
-                totalMaterials) *
+              (totalEmbeddings / totalMaterials) *
               100
-            ).toFixed(2)
+            ).toFixed(1)
           )
         : 0;
 
     /* ========================================================
-       NCS MASTER
+       BMG MASTER
     ======================================================== */
 
-    const totalNCS =
-      await countTable(
-        supabase,
-        "ncs_materials",
-        "ncs_id"
-      );
+    const totalBMG = await countTable(
+      supabase,
+      "bmg_materials",
+      "id"
+    );
 
-    const ncsStatuses =
-      await countByStatus(
-        supabase,
-        "ncs_materials",
-        "status",
-        [
-          "PROPOSED",
-          "APPROVED",
-          "REJECTED",
-        ]
-      );
+    const proposedBMG = await countStatus(
+      supabase,
+      "bmg_materials",
+      "status",
+      "PROPOSED"
+    );
+
+    const approvedBMG = await countStatus(
+      supabase,
+      "bmg_materials",
+      "status",
+      "APPROVED"
+    );
+
+    const rejectedBMG = await countStatus(
+      supabase,
+      "bmg_materials",
+      "status",
+      "REJECTED"
+    );
 
     /* ========================================================
-       STANDARDIZATION REQUESTS
+       BMG MATERIAL MAPPINGS
     ======================================================== */
 
-    const requestStatuses =
-      await countByStatus(
-        supabase,
-        "standardization_requests",
-        "status",
-        [
-          "PENDING",
-          "APPROVED",
-          "REJECTED",
-          "NEEDS_MORE_DATA",
-        ]
-      );
+    const totalBMGMappings = await countTable(
+      supabase,
+      "material_bmg_mapping",
+      "mapping_id"
+    );
+
+    const activeBMGMappings = await countStatus(
+      supabase,
+      "material_bmg_mapping",
+      "mapping_status",
+      "ACTIVE"
+    );
+
+    const proposedBMGMappings = await countStatus(
+      supabase,
+      "material_bmg_mapping",
+      "mapping_status",
+      "AI_PROPOSED"
+    );
+
+    const pendingBMGMappings = await countStatus(
+      supabase,
+      "material_bmg_mapping",
+      "mapping_status",
+      "PENDING_REVIEW"
+    );
+
+    const approvedBMGMappings = await countStatus(
+      supabase,
+      "material_bmg_mapping",
+      "mapping_status",
+      "APPROVED"
+    );
 
     /* ========================================================
-       MIGRATION
+       BMG REVIEW REQUESTS
     ======================================================== */
 
-    const migrationStatuses =
-      await countByStatus(
-        supabase,
-        "material_migration_map",
-        "migration_status",
-        [
-          "PENDING",
-          "AI_PROPOSED",
-          "UNDER_REVIEW",
-          "APPROVED",
-          "REJECTED",
-          "MIGRATED",
-        ]
-      );
+    const totalReviewRequests = await countTable(
+      supabase,
+      "bmg_standardization_requests",
+      "request_id"
+    );
 
-    const totalMigrationMappings =
-      Object.values(
-        migrationStatuses
-      ).reduce(
-        (sum, value) =>
-          sum + Number(value || 0),
-        0
-      );
+    const pendingReviewRequests = await countStatus(
+      supabase,
+      "bmg_standardization_requests",
+      "status",
+      "PENDING_REVIEW"
+    );
 
-    const migrationCompleted =
-      migrationStatuses.MIGRATED || 0;
+    const approvedReviewRequests = await countStatus(
+      supabase,
+      "bmg_standardization_requests",
+      "status",
+      "APPROVED"
+    );
 
-    const migrationProgress =
-      totalMigrationMappings > 0
-        ? Number(
-            (
-              (migrationCompleted /
-                totalMigrationMappings) *
-              100
-            ).toFixed(2)
-          )
-        : 0;
-
-    /* ========================================================
-       AUDIT
-    ======================================================== */
-
-    const auditTotal =
-      await countTable(
-        supabase,
-        "material_audit_log",
-        "audit_id"
-      );
-
-    const auditActions =
-      await countByStatus(
-        supabase,
-        "material_audit_log",
-        "action",
-        [
-          "APPROVE",
-          "REJECT",
-          "NEEDS_MORE_DATA",
-        ]
-      );
-
-    /* ========================================================
-       MATCH FEEDBACK
-    ======================================================== */
-
-    const feedbackTotal =
-      await countTable(
-        supabase,
-        "material_match_feedback",
-        "feedback_id"
-      );
-
-    const {
-      count: positiveFeedback,
-      error:
-        positiveFeedbackError,
-    } = await supabase
-      .from(
-        "material_match_feedback"
-      )
-      .select(
-        "feedback_id",
-        {
-          count: "exact",
-          head: true,
-        }
-      )
-      .eq(
-        "label",
-        1
-      );
-
-    if (
-      positiveFeedbackError
-    ) {
-      throw new Error(
-        `Failed to count positive ML feedback: ${positiveFeedbackError.message}`
-      );
-    }
-
-    const {
-      count: negativeFeedback,
-      error:
-        negativeFeedbackError,
-    } = await supabase
-      .from(
-        "material_match_feedback"
-      )
-      .select(
-        "feedback_id",
-        {
-          count: "exact",
-          head: true,
-        }
-      )
-      .eq(
-        "label",
-        0
-      );
-
-    if (
-      negativeFeedbackError
-    ) {
-      throw new Error(
-        `Failed to count negative ML feedback: ${negativeFeedbackError.message}`
-      );
-    }
+    const rejectedReviewRequests = await countStatus(
+      supabase,
+      "bmg_standardization_requests",
+      "status",
+      "REJECTED"
+    );
 
     /* ========================================================
        COMPANY COVERAGE
     ======================================================== */
 
-    const {
-      data: companyRows,
-      error:
-        companyError,
-    } = await supabase
-      .from("materials")
-      .select("company");
+    let companies = [];
 
-    if (companyError) {
-      throw new Error(
-        `Failed to load company coverage: ${companyError.message}`
-      );
-    }
+    try {
+      const { data: companyRows, error } = await supabase
+        .from("materials")
+        .select("company");
 
-    const companyCounts =
-      new Map();
+      if (!error && companyRows) {
+        const companyCounts = new Map();
 
-    for (const row of
-      companyRows || []) {
-      const company =
-        String(
-          row.company || ""
-        ).trim();
+        for (const row of companyRows) {
+          const company = String(
+            row.company || ""
+          ).trim();
 
-      if (!company) {
-        continue;
-      }
+          if (!company) {
+            continue;
+          }
 
-      companyCounts.set(
-        company,
-        (companyCounts.get(
-          company
-        ) || 0) + 1
-      );
-    }
+          companyCounts.set(
+            company,
+            (companyCounts.get(company) || 0) + 1
+          );
+        }
 
-    const companies =
-      Array.from(
-        companyCounts.entries()
-      )
-        .map(
-          ([company, records]) => ({
+        companies = Array.from(
+          companyCounts.entries()
+        )
+          .map(([company, records]) => ({
             company,
             records,
-          })
-        )
-        .sort(
-          (a, b) =>
-            b.records -
-            a.records
-        );
-
-    /* ========================================================
-       NATIONAL MASTER MAPPING
-    ======================================================== */
-
-    const totalMappings =
-      await countTable(
-        supabase,
-        "material_ncs_mapping",
-        "mapping_id"
-      );
-
-    const {
-      count: verifiedMappings,
-      error:
-        verifiedMappingError,
-    } = await supabase
-      .from(
-        "material_ncs_mapping"
-      )
-      .select(
-        "mapping_id",
-        {
-          count: "exact",
-          head: true,
-        }
-      )
-      .eq(
-        "verified",
-        true
-      );
-
-    if (
-      verifiedMappingError
-    ) {
-      throw new Error(
-        `Failed to count verified NCS mappings: ${verifiedMappingError.message}`
+          }))
+          .sort(
+            (a, b) =>
+              b.records - a.records
+          );
+      }
+    } catch (error) {
+      console.warn(
+        "Company coverage failed:",
+        error
       );
     }
+
+    /* ========================================================
+       ASSIGNED MATERIALS
+    ======================================================== */
+
+    let assignedMaterials = 0;
+    let unassignedMaterials = totalMaterials;
+
+    try {
+      const { data, error } = await supabase
+        .from("materials")
+        .select("id, bmg_id");
+
+      if (!error && data) {
+        assignedMaterials = data.filter(
+          material =>
+            material.bmg_id !== null &&
+            material.bmg_id !== undefined &&
+            String(material.bmg_id).trim() !== ""
+        ).length;
+
+        unassignedMaterials =
+          Math.max(
+            0,
+            data.length - assignedMaterials
+          );
+      }
+    } catch (error) {
+      console.warn(
+        "Assigned material calculation failed:",
+        error
+      );
+    }
+
+    const bmgAssignmentCoverage =
+      totalMaterials > 0
+        ? Number(
+            (
+              (assignedMaterials /
+                totalMaterials) *
+              100
+            ).toFixed(1)
+          )
+        : 0;
 
     /* ========================================================
        RESPONSE
     ======================================================== */
 
-    return NextResponse.json({
-      success: true,
+    return NextResponse.json(
+      {
+        success: true,
 
-      generated_at:
-        new Date().toISOString(),
+        generated_at:
+          new Date().toISOString(),
 
-      materials: {
-        total:
-          totalMaterials,
+        materials: {
+          total: totalMaterials,
 
-        embeddings:
-          totalEmbeddings,
+          details:
+            totalMaterialDetails,
 
-        embedding_coverage_percent:
-          embeddingCoverage,
+          embeddings:
+            totalEmbeddings,
+
+          embedding_coverage_percent:
+            embeddingCoverage,
+
+          assigned_bmg:
+            assignedMaterials,
+
+          unassigned_bmg:
+            unassignedMaterials,
+
+          bmg_assignment_coverage_percent:
+            bmgAssignmentCoverage,
+        },
+
+        bmg: {
+          total:
+            totalBMG,
+
+          proposed:
+            proposedBMG,
+
+          approved:
+            approvedBMG,
+
+          rejected:
+            rejectedBMG,
+
+          mappings:
+            totalBMGMappings,
+
+          active_mappings:
+            activeBMGMappings,
+
+          ai_proposed_mappings:
+            proposedBMGMappings,
+
+          pending_mappings:
+            pendingBMGMappings,
+
+          approved_mappings:
+            approvedBMGMappings,
+        },
+
+        review: {
+          total:
+            totalReviewRequests,
+
+          pending:
+            pendingReviewRequests,
+
+          approved:
+            approvedReviewRequests,
+
+          rejected:
+            rejectedReviewRequests,
+        },
+
+        companies,
       },
-
-      ncs: {
-        total:
-          totalNCS,
-
-        proposed:
-          ncsStatuses.PROPOSED ||
-          0,
-
-        approved:
-          ncsStatuses.APPROVED ||
-          0,
-
-        rejected:
-          ncsStatuses.REJECTED ||
-          0,
-      },
-
-      standardization_requests: {
-        total:
-          Object.values(
-            requestStatuses
-          ).reduce(
-            (sum, value) =>
-              sum +
-              Number(
-                value || 0
-              ),
-            0
-          ),
-
-        pending:
-          requestStatuses.PENDING ||
-          0,
-
-        approved:
-          requestStatuses.APPROVED ||
-          0,
-
-        rejected:
-          requestStatuses.REJECTED ||
-          0,
-
-        needs_more_data:
-          requestStatuses.NEEDS_MORE_DATA ||
-          0,
-      },
-
-      migration: {
-        total:
-          totalMigrationMappings,
-
-        pending:
-          migrationStatuses.PENDING ||
-          0,
-
-        ai_proposed:
-          migrationStatuses.AI_PROPOSED ||
-          0,
-
-        under_review:
-          migrationStatuses.UNDER_REVIEW ||
-          0,
-
-        approved:
-          migrationStatuses.APPROVED ||
-          0,
-
-        rejected:
-          migrationStatuses.REJECTED ||
-          0,
-
-        migrated:
-          migrationStatuses.MIGRATED ||
-          0,
-
-        progress_percent:
-          migrationProgress,
-      },
-
-      audit: {
-        total:
-          auditTotal,
-
-        approvals:
-          auditActions.APPROVE ||
-          0,
-
-        rejections:
-          auditActions.REJECT ||
-          0,
-
-        needs_more_data:
-          auditActions.NEEDS_MORE_DATA ||
-          0,
-      },
-
-      ml_feedback: {
-        total:
-          feedbackTotal,
-
-        positive:
-          positiveFeedback || 0,
-
-        negative:
-          negativeFeedback || 0,
-
-        labeled:
-          (positiveFeedback || 0) +
-          (negativeFeedback || 0),
-      },
-
-      national_master: {
-        total_mappings:
-          totalMappings,
-
-        verified_mappings:
-          verifiedMappings || 0,
-
-        verification_percent:
-          totalMappings > 0
-            ? Number(
-                (
-                  ((verifiedMappings ||
-                    0) /
-                    totalMappings) *
-                  100
-                ).toFixed(2)
-              )
-            : 0,
-      },
-
-      companies,
-    });
+      {
+        headers: {
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate, proxy-revalidate",
+        },
+      }
+    );
   } catch (error) {
     console.error(
       "Dashboard stats error:",
@@ -544,8 +407,10 @@ export async function GET() {
     return NextResponse.json(
       {
         success: false,
+
         error:
           "Failed to load live dashboard statistics.",
+
         details:
           error?.message ||
           String(error),

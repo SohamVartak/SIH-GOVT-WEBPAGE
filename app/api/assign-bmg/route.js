@@ -17,28 +17,18 @@ const ai = new GoogleGenAI({
 // ============================================================
 
 function getSupabaseAdmin() {
-  const url =
-    process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url) {
-    throw new Error(
-      "NEXT_PUBLIC_SUPABASE_URL is missing."
-    );
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL is missing.");
   }
 
   if (!key) {
-    throw new Error(
-      "SUPABASE_SERVICE_ROLE_KEY is missing."
-    );
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is missing.");
   }
 
-  return createClient(
-    url,
-    key
-  );
+  return createClient(url, key);
 }
 
 // ============================================================
@@ -46,31 +36,33 @@ function getSupabaseAdmin() {
 // ============================================================
 
 function clean(value) {
-  if (
-    value === undefined ||
-    value === null
-  ) {
+  if (value === undefined || value === null) {
     return null;
   }
 
-  const text =
-    String(value).trim();
+  const text = String(value).trim();
 
   return text || null;
 }
 
+function normalizeText(value) {
+  return clean(value)
+    ?.toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim() || null;
+}
+
 // ============================================================
-// BUILD SOURCE MATERIAL PROFILE
+// BUILD MATERIAL PROFILE
 // ============================================================
 
-function buildMaterialProfile(
-  material,
-  detail
-) {
+function buildMaterialProfile(material, detail) {
   return {
-    company:
-      material?.company || null,
+    company: material?.company || null,
 
+    // IMPORTANT:
+    // This is contextual information only.
+    // It is NEVER the BMG identity.
     company_material_code:
       material?.material_number || null,
 
@@ -155,10 +147,7 @@ async function loadSourceMaterial(
         "bmg_id",
       ].join(",")
     )
-    .eq(
-      "id",
-      materialId
-    )
+    .eq("id", materialId)
     .single();
 
   if (materialError) {
@@ -173,10 +162,7 @@ async function loadSourceMaterial(
   } = await supabase
     .from("material_details")
     .select("*")
-    .eq(
-      "material_id",
-      materialId
-    )
+    .eq("material_id", materialId)
     .maybeSingle();
 
   if (detailError) {
@@ -192,7 +178,17 @@ async function loadSourceMaterial(
 }
 
 // ============================================================
-// LOAD EXISTING BMG IDENTITIES
+// LOAD EXISTING BMG GROUPS
+//
+// A BMG group is a COMMON technical identity.
+//
+// It is NOT:
+// - company specific
+// - material-number specific
+// - manufacturer specific
+//
+// All existing mapped materials are supplied to Gemini as
+// evidence for the identity of each BMG group.
 // ============================================================
 
 async function loadExistingBMGs(
@@ -215,12 +211,9 @@ async function loadExistingBMGs(
         "status",
       ].join(",")
     )
-    .order(
-      "bmg_id",
-      {
-        ascending: true,
-      }
-    );
+    .order("bmg_id", {
+      ascending: true,
+    });
 
   if (bmgError) {
     throw new Error(
@@ -228,10 +221,7 @@ async function loadExistingBMGs(
     );
   }
 
-  if (
-    !bmgRows ||
-    bmgRows.length === 0
-  ) {
+  if (!bmgRows || bmgRows.length === 0) {
     return [];
   }
 
@@ -239,9 +229,7 @@ async function loadExistingBMGs(
     data: mappings,
     error: mappingError,
   } = await supabase
-    .from(
-      "material_bmg_mapping"
-    )
+    .from("material_bmg_mapping")
     .select(
       [
         "mapping_id",
@@ -254,14 +242,8 @@ async function loadExistingBMGs(
         "active",
       ].join(",")
     )
-    .eq(
-      "active",
-      true
-    )
-    .neq(
-      "material_id",
-      sourceMaterialId
-    );
+    .eq("active", true)
+    .neq("material_id", sourceMaterialId);
 
   if (mappingError) {
     throw new Error(
@@ -269,25 +251,19 @@ async function loadExistingBMGs(
     );
   }
 
-  if (
-    !mappings ||
-    mappings.length === 0
-  ) {
+  if (!mappings || mappings.length === 0) {
     return [];
   }
 
   const materialIds = [
     ...new Set(
       mappings.map(
-        (row) =>
-          row.material_id
+        (row) => row.material_id
       )
     ),
   ];
 
-  if (
-    materialIds.length === 0
-  ) {
+  if (materialIds.length === 0) {
     return [];
   }
 
@@ -307,10 +283,7 @@ async function loadExistingBMGs(
         "category",
       ].join(",")
     )
-    .in(
-      "id",
-      materialIds
-    );
+    .in("id", materialIds);
 
   if (materialsError) {
     throw new Error(
@@ -324,10 +297,7 @@ async function loadExistingBMGs(
   } = await supabase
     .from("material_details")
     .select("*")
-    .in(
-      "material_id",
-      materialIds
-    );
+    .in("material_id", materialIds);
 
   if (detailsError) {
     throw new Error(
@@ -335,39 +305,27 @@ async function loadExistingBMGs(
     );
   }
 
-  const materialMap =
-    new Map();
+  const materialMap = new Map();
 
-  for (
-    const material of
-    materials || []
-  ) {
+  for (const material of materials || []) {
     materialMap.set(
       material.id,
       material
     );
   }
 
-  const detailMap =
-    new Map();
+  const detailMap = new Map();
 
-  for (
-    const detail of
-    details || []
-  ) {
+  for (const detail of details || []) {
     detailMap.set(
       detail.material_id,
       detail
     );
   }
 
-  const groups =
-    new Map();
+  const groups = new Map();
 
-  for (
-    const bmg of
-    bmgRows
-  ) {
+  for (const bmg of bmgRows) {
     groups.set(
       bmg.bmg_id,
       {
@@ -377,14 +335,10 @@ async function loadExistingBMGs(
     );
   }
 
-  for (
-    const mapping of
-    mappings
-  ) {
-    const group =
-      groups.get(
-        mapping.bmg_id
-      );
+  for (const mapping of mappings) {
+    const group = groups.get(
+      mapping.bmg_id
+    );
 
     if (!group) {
       continue;
@@ -406,6 +360,7 @@ async function loadExistingBMGs(
 
     group.representatives.push({
       mapping,
+
       profile:
         buildMaterialProfile(
           material,
@@ -420,7 +375,7 @@ async function loadExistingBMGs(
 }
 
 // ============================================================
-// BUILD AI PROMPT
+// BUILD BMG ASSIGNMENT PROMPT
 // ============================================================
 
 function buildBMGPrompt(
@@ -454,7 +409,7 @@ function buildBMGPrompt(
 
         representative_materials:
           group.representatives
-            .slice(0, 5)
+            .slice(0, 10)
             .map(
               (item) =>
                 item.profile
@@ -463,54 +418,364 @@ function buildBMGPrompt(
     );
 
   return `
-You are the BMG material identity engine for Bharat Material Grid.
+You are the BMG Common Material Identity Assignment Engine
+for Bharat Material Grid.
 
-Your task is to determine whether the NEW MATERIAL is
-technically equivalent to an existing BMG Common Material Identity.
+Your ONLY job is to determine which COMMON BMG technical
+identity the NEW MATERIAL belongs to.
 
-BMG Common Code represents one common technical identity.
+============================================================
+ABSOLUTE RULE
+============================================================
 
-Different companies may share the same BMG code.
+ONE TECHNICALLY EQUIVALENT PRODUCT = ONE BMG IDENTITY.
 
-The original company material number must NEVER be changed.
+A BMG identity is GLOBAL across companies.
 
-Do NOT determine equivalence using only similar wording.
+Therefore:
 
-Analyze engineering characteristics including:
+IOCL equivalent product
++
+BPCL equivalent product
++
+HPCL equivalent product
++
+BHEL equivalent product
 
-- product type
-- product function
-- material family
-- material grade
-- dimensions
-- pressure rating
-- temperature rating
-- standards
-- end connections
-- design features
-- manufacturer
-- model
-- part number
-- application
-- technical specifications
-- description
+MUST all use the SAME BMG ID when their technical identity
+is equivalent.
 
-Rules:
+Example:
 
-1. Technical equivalence is required.
-2. Missing information is uncertainty, not equality.
-3. Never invent missing technical information.
-4. Critical engineering conflicts should prevent reuse.
-5. Different companies may share one BMG code.
-6. Different company material numbers may share one BMG code.
-7. Do not create a new BMG identity merely because the wording differs.
-8. Do not reuse an existing BMG identity merely because the wording is similar.
-9. If no technically equivalent identity exists, create a new BMG identity.
-10. The NCS name must be a neutral standardized product name.
-11. Never include a company name in the NCS name.
-12. Return ONLY valid JSON.
+IOCL:
+Deep Groove Ball Bearing 6205
+Material Code: IOCL-12345
 
-NEW MATERIAL:
+→ BMG-BEARING-001
+
+
+BPCL:
+Ball Bearing 6205
+Material Code: BPCL-98765
+
+→ BMG-BEARING-001
+
+
+HPCL:
+Bearing 6205
+Material Code: HPCL-55555
+
+→ BMG-BEARING-001
+
+The company material numbers are DIFFERENT, but the BMG
+identity is the SAME.
+
+============================================================
+DO NOT CREATE DUPLICATE BMG IDENTITIES
+============================================================
+
+Before creating a new BMG identity, you MUST examine
+EVERY supplied existing BMG identity.
+
+If an existing BMG represents the same technical product,
+you MUST reuse it.
+
+Never create a new BMG simply because:
+
+- company is different
+- company material number is different
+- manufacturer is different
+- description wording is different
+- abbreviations are different
+- spelling is different
+- datasheet wording is different
+- one description is more detailed
+- one company uses a different naming convention
+
+These differences do NOT justify a new BMG.
+
+============================================================
+TECHNICAL EQUIVALENCE
+============================================================
+
+Determine equivalence primarily from engineering
+characteristics.
+
+Evaluate:
+
+1. Product type
+2. Product function
+3. Material family
+4. Material grade
+5. Dimensions
+6. Pressure rating
+7. Temperature rating
+8. Voltage
+9. Current
+10. Power
+11. Capacity
+12. Flow rate
+13. Speed/RPM
+14. Size
+15. Standard
+16. End connection
+17. Design features
+18. Application
+19. Technical specifications
+20. Manufacturer/model/part number when technically useful
+
+Manufacturer, model and part number are supporting evidence.
+
+They are NOT automatically BMG identity boundaries.
+
+============================================================
+CRITICAL SPECIFICATIONS
+============================================================
+
+A superficial similarity is NOT enough.
+
+If a critical engineering characteristic conflicts,
+the materials may require different BMG identities.
+
+Examples:
+
+Bearing 6205
+vs
+Bearing 6305
+
+→ DIFFERENT BMG
+
+SS304
+vs
+SS316
+
+→ DIFFERENT BMG when material grade is technically defining
+
+PN16
+vs
+PN40
+
+→ DIFFERENT BMG when pressure rating is technically defining
+
+230V
+vs
+415V
+
+→ DIFFERENT BMG when voltage is technically defining
+
+10 mm
+vs
+20 mm
+
+→ DIFFERENT BMG when dimension is technically defining
+
+Different incompatible standards may also require
+different BMG identities.
+
+============================================================
+SIMILARITY VS EQUIVALENCE
+============================================================
+
+Similarity percentage alone does NOT decide the BMG.
+
+For example:
+
+99% textual similarity
+does NOT automatically mean same BMG.
+
+60% textual similarity
+does NOT automatically mean different BMG.
+
+The important question is:
+
+"Are these technically equivalent products for the
+purpose represented by the BMG identity?"
+
+Technical equivalence is more important than wording.
+
+============================================================
+60% THRESHOLD
+============================================================
+
+60% is the minimum confidence required for assigning an
+existing BMG identity.
+
+However:
+
+60% confidence alone does NOT prove equivalence.
+
+You must first determine that the existing BMG is
+technically compatible.
+
+Then:
+
+IF technically equivalent
+AND confidence >= 60
+
+→ REUSE_EXISTING
+
+IF technically incompatible
+OR no equivalent BMG exists
+
+→ CREATE_NEW
+
+============================================================
+MISSING DATA
+============================================================
+
+Do not invent specifications.
+
+Missing information creates uncertainty.
+
+However, missing information alone does NOT prove that
+two products are different.
+
+Use all available evidence.
+
+============================================================
+BMG IDENTITY
+============================================================
+
+The BMG identity must describe the COMMON PRODUCT.
+
+Never include:
+
+- company name
+- company material number
+- company-specific code
+- internal company identifier
+
+The company material number belongs only to the original
+company material record.
+
+============================================================
+NCS NAME
+============================================================
+
+Return a neutral standardized product name.
+
+Examples:
+
+O-RING
+BALL BEARING
+GATE VALVE
+GASKET
+PRESSURE GAUGE
+ELECTRIC MOTOR
+
+Do not use company-specific naming.
+
+============================================================
+DECISION PROCESS
+============================================================
+
+Follow these steps internally:
+
+STEP 1:
+Understand the technical identity of the new material.
+
+STEP 2:
+Inspect EVERY existing BMG identity.
+
+STEP 3:
+Compare the new material against representative materials
+belonging to each BMG.
+
+STEP 4:
+Identify critical technical specifications.
+
+STEP 5:
+Reject BMGs containing critical engineering conflicts.
+
+STEP 6:
+If an existing BMG is technically equivalent, REUSE it.
+
+STEP 7:
+Only if NO existing BMG is technically equivalent,
+CREATE a new BMG identity.
+
+============================================================
+VERY IMPORTANT
+============================================================
+
+If the new material is technically equivalent to an existing
+BMG, you MUST NOT return CREATE_NEW.
+
+Even if:
+
+- the company differs
+- the material number differs
+- description differs
+- manufacturer differs
+- wording differs
+- confidence is 80%
+- confidence is 90%
+- confidence is 95%
+- confidence is 99%
+
+REUSE the existing BMG.
+
+============================================================
+OUTPUT
+============================================================
+
+Return exactly ONE JSON object.
+
+For existing BMG:
+
+{
+  "decision": "REUSE_EXISTING",
+  "existing_bmg_id": 123,
+  "confidence": 95,
+  "ncs_name": "BALL BEARING",
+  "category": "BEARING",
+  "subcategory": "DEEP GROOVE BALL BEARING",
+  "reason": "Technically equivalent to the existing BMG common identity.",
+  "matched_aspects": [
+    "product type",
+    "bearing series",
+    "dimensions",
+    "application"
+  ],
+  "differences": []
+}
+
+For new BMG:
+
+{
+  "decision": "CREATE_NEW",
+  "existing_bmg_id": null,
+  "confidence": 90,
+  "ncs_name": "BALL BEARING",
+  "category": "BEARING",
+  "subcategory": "DEEP GROOVE BALL BEARING",
+  "reason": "No existing BMG identity is technically equivalent.",
+  "matched_aspects": [],
+  "differences": []
+}
+
+============================================================
+FINAL DUPLICATE CHECK
+============================================================
+
+Before returning CREATE_NEW, ask:
+
+"Could any existing BMG represent the same technical
+product identity?"
+
+If YES:
+
+→ REUSE_EXISTING
+
+If NO:
+
+→ CREATE_NEW
+
+This check is mandatory.
+
+============================================================
+NEW MATERIAL
+============================================================
 
 ${JSON.stringify(
   sourceProfile,
@@ -518,57 +783,23 @@ ${JSON.stringify(
   2
 )}
 
-EXISTING BMG IDENTITIES:
+============================================================
+EXISTING BMG IDENTITIES
+============================================================
 
 ${JSON.stringify(
   existingPayload,
   null,
   2
 )}
-
-Return exactly one JSON object.
-
-For an existing match:
-
-{
-  "decision": "REUSE_EXISTING",
-  "existing_bmg_id": 123,
-  "confidence": 95,
-  "ncs_name": "O-RING",
-  "category": "SEAL",
-  "subcategory": "O-RING",
-  "reason": "Technically equivalent based on product function and engineering characteristics.",
-  "matched_aspects": [
-    "product type",
-    "dimensions",
-    "material"
-  ],
-  "differences": []
-}
-
-For a new identity:
-
-{
-  "decision": "CREATE_NEW",
-  "existing_bmg_id": null,
-  "confidence": 90,
-  "ncs_name": "O-RING",
-  "category": "SEAL",
-  "subcategory": "O-RING",
-  "reason": "No existing BMG identity is technically equivalent.",
-  "matched_aspects": [],
-  "differences": []
-}
 `;
 }
 
 // ============================================================
-// TEMPORARY GEMINI ERROR DETECTION
+// GEMINI TEMPORARY ERROR DETECTION
 // ============================================================
 
-function isTemporaryGeminiError(
-  error
-) {
+function isTemporaryGeminiError(error) {
   const status =
     error?.status ||
     error?.code;
@@ -583,21 +814,11 @@ function isTemporaryGeminiError(
   return (
     status === 503 ||
     status === 429 ||
-    message.includes(
-      "unavailable"
-    ) ||
-    message.includes(
-      "high demand"
-    ) ||
-    message.includes(
-      "temporarily"
-    ) ||
-    message.includes(
-      "rate limit"
-    ) ||
-    message.includes(
-      "overloaded"
-    )
+    message.includes("unavailable") ||
+    message.includes("high demand") ||
+    message.includes("temporarily") ||
+    message.includes("rate limit") ||
+    message.includes("overloaded")
   );
 }
 
@@ -608,18 +829,12 @@ function isTemporaryGeminiError(
 function sleep(ms) {
   return new Promise(
     (resolve) =>
-      setTimeout(
-        resolve,
-        ms
-      )
+      setTimeout(resolve, ms)
   );
 }
 
 // ============================================================
-// AI CALL
-//
-// Only gemini-3.6-flash is used.
-// It gets 4 attempts on temporary 503/429 errors.
+// ASK GEMINI
 // ============================================================
 
 async function askAIForBMG(
@@ -632,8 +847,7 @@ async function askAIForBMG(
       existingBMGs
     );
 
-  let lastError =
-    null;
+  let lastError = null;
 
   for (
     let attempt = 1;
@@ -672,9 +886,7 @@ async function askAIForBMG(
 
       try {
         parsed =
-          JSON.parse(
-            text
-          );
+          JSON.parse(text);
       } catch {
         console.error(
           "Invalid BMG AI JSON:",
@@ -688,17 +900,12 @@ async function askAIForBMG(
 
       return parsed;
     } catch (error) {
-      lastError =
-        error;
+      lastError = error;
 
       console.error(
         `BMG AI attempt ${attempt} failed:`,
         error
       );
-
-      // ------------------------------------------------------
-      // STOP immediately for non-temporary errors.
-      // ------------------------------------------------------
 
       if (
         !isTemporaryGeminiError(
@@ -708,19 +915,9 @@ async function askAIForBMG(
         throw error;
       }
 
-      // ------------------------------------------------------
-      // No delay after final attempt.
-      // ------------------------------------------------------
-
-      if (
-        attempt >= 4
-      ) {
+      if (attempt >= 4) {
         break;
       }
-
-      // ------------------------------------------------------
-      // Increasing retry delay.
-      // ------------------------------------------------------
 
       const waitTime =
         attempt === 1
@@ -733,9 +930,7 @@ async function askAIForBMG(
         `Gemini temporarily unavailable. Retrying in ${waitTime} ms...`
       );
 
-      await sleep(
-        waitTime
-      );
+      await sleep(waitTime);
     }
   }
 
@@ -748,7 +943,7 @@ async function askAIForBMG(
 }
 
 // ============================================================
-// CREATE NEW BMG IDENTITY
+// CREATE NEW BMG
 // ============================================================
 
 async function createNewBMG(
@@ -757,26 +952,17 @@ async function createNewBMG(
   sourceMaterial
 ) {
   const ncsName =
-    clean(
-      decision.ncs_name
-    ) ||
-    clean(
-      sourceMaterial.description
-    ) ||
+    clean(decision.ncs_name) ||
+    clean(sourceMaterial.description) ||
     "UNCLASSIFIED MATERIAL";
 
   const category =
-    clean(
-      decision.category
-    ) ||
-    clean(
-      sourceMaterial.category
-    );
+    clean(decision.category) ||
+    clean(sourceMaterial.category) ||
+    "UNCLASSIFIED";
 
   const subcategory =
-    clean(
-      decision.subcategory
-    );
+    clean(decision.subcategory);
 
   const {
     data: bmg,
@@ -833,19 +1019,16 @@ async function mapMaterialToBMG(
   reason
 ) {
   // ----------------------------------------------------------
-  // Deactivate previous active mappings.
+  // Deactivate any previous active mapping
   // ----------------------------------------------------------
 
   const {
     error:
       deactivateError,
   } = await supabase
-    .from(
-      "material_bmg_mapping"
-    )
+    .from("material_bmg_mapping")
     .update({
-      active:
-        false,
+      active: false,
     })
     .eq(
       "material_id",
@@ -863,7 +1046,7 @@ async function mapMaterialToBMG(
   }
 
   // ----------------------------------------------------------
-  // Create mapping.
+  // Create new active mapping
   // ----------------------------------------------------------
 
   const {
@@ -871,9 +1054,7 @@ async function mapMaterialToBMG(
     error:
       mappingError,
   } = await supabase
-    .from(
-      "material_bmg_mapping"
-    )
+    .from("material_bmg_mapping")
     .insert({
       material_id:
         materialId,
@@ -923,7 +1104,7 @@ async function mapMaterialToBMG(
   }
 
   // ----------------------------------------------------------
-  // Store BMG ID directly on materials.
+  // Also store BMG ID on materials
   // ----------------------------------------------------------
 
   const {
@@ -1059,15 +1240,12 @@ export async function POST(
     ) {
       return NextResponse.json(
         {
-          success:
-            false,
-
+          success: false,
           error:
             "GEMINI_API_KEY is missing.",
         },
         {
-          status:
-            500,
+          status: 500,
         }
       );
     }
@@ -1092,15 +1270,12 @@ export async function POST(
     ) {
       return NextResponse.json(
         {
-          success:
-            false,
-
+          success: false,
           error:
             "A valid materialId is required.",
         },
         {
-          status:
-            400,
+          status: 400,
         }
       );
     }
@@ -1119,9 +1294,9 @@ export async function POST(
       );
 
     // ========================================================
-    // ALREADY HAS BMG
+    // ALREADY ASSIGNED
     //
-    // In this situation we DO NOT call Gemini.
+    // Do not create duplicate mappings.
     // ========================================================
 
     if (
@@ -1160,8 +1335,7 @@ export async function POST(
 
       if (existingBMG) {
         return NextResponse.json({
-          success:
-            true,
+          success: true,
 
           action:
             "ALREADY_ASSIGNED",
@@ -1211,6 +1385,10 @@ export async function POST(
         supabase,
         materialId
       );
+
+    console.log(
+      `Loaded ${existingBMGs.length} existing BMG identities for material ${materialId}.`
+    );
 
     // ========================================================
     // ASK GEMINI
@@ -1265,14 +1443,14 @@ export async function POST(
     }
 
     // ========================================================
-    // DETERMINE BMG IDENTITY
+    // DETERMINE BMG
     // ========================================================
 
     let bmg;
     let action;
 
     // ========================================================
-    // REUSE EXISTING
+    // REUSE EXISTING BMG
     // ========================================================
 
     if (
@@ -1295,6 +1473,13 @@ export async function POST(
         );
       }
 
+      // ------------------------------------------------------
+      // SECURITY / VALIDATION
+      //
+      // Gemini cannot assign an arbitrary BMG ID.
+      // The BMG must actually exist in the candidate list.
+      // ------------------------------------------------------
+
       const candidate =
         existingBMGs.find(
           (item) =>
@@ -1311,14 +1496,14 @@ export async function POST(
       }
 
       // ------------------------------------------------------
-      // SAFETY THRESHOLD
+      // 60% ASSIGNMENT THRESHOLD
       // ------------------------------------------------------
 
       if (
-        confidence < 80
+        confidence < 60
       ) {
         throw new Error(
-          `AI confidence (${confidence}%) is below the 80% threshold required to reuse an existing BMG identity.`
+          `AI confidence (${confidence}%) is below the 60% threshold required to reuse an existing BMG identity.`
         );
       }
 
@@ -1330,10 +1515,17 @@ export async function POST(
     }
 
     // ========================================================
-    // CREATE NEW
+    // CREATE NEW BMG
     // ========================================================
 
     else {
+      /*
+       * Gemini is only allowed to create a new identity after
+       * checking every existing BMG identity.
+       *
+       * The prompt explicitly requires this.
+       */
+
       bmg =
         await createNewBMG(
           supabase,
@@ -1346,7 +1538,7 @@ export async function POST(
     }
 
     // ========================================================
-    // SAVE MAPPING
+    // SAVE MATERIAL → BMG MAPPING
     // ========================================================
 
     const reason =
@@ -1375,15 +1567,37 @@ export async function POST(
       );
 
     // ========================================================
+    // LOG ASSIGNMENT
+    // ========================================================
+
+    console.log(
+      JSON.stringify(
+        {
+          materialId,
+          company:
+            material.company,
+          companyMaterialNumber:
+            material.material_number,
+          action,
+          bmgId:
+            bmg.bmg_id,
+          bmgCode:
+            bmg.bmg_code,
+          confidence,
+        },
+        null,
+        2
+      )
+    );
+
+    // ========================================================
     // RETURN RESULT
     // ========================================================
 
     return NextResponse.json({
-      success:
-        true,
+      success: true,
 
-      action:
-        action,
+      action,
 
       data: {
         material_id:
@@ -1448,8 +1662,7 @@ export async function POST(
 
     return NextResponse.json(
       {
-        success:
-          false,
+        success: false,
 
         error:
           error?.message ||
@@ -1460,8 +1673,7 @@ export async function POST(
           String(error),
       },
       {
-        status:
-          500,
+        status: 500,
       }
     );
   }

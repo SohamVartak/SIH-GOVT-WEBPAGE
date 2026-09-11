@@ -10,8 +10,11 @@ export const revalidate = 0;
 ========================================================= */
 
 function getAdminSupabase() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  const serviceRoleKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error(
@@ -19,21 +22,20 @@ function getAdminSupabase() {
     );
   }
 
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  return createClient(
+    supabaseUrl,
+    serviceRoleKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
 }
 
 /* =========================================================
    AUTHENTICATION
-
-   Supports:
-   1. Authorization: Bearer <token>
-   2. bmg_access_token cookie
-   3. Supabase SSR cookie session
 ========================================================= */
 
 async function getAuthenticatedUser(request) {
@@ -64,23 +66,25 @@ async function getAuthenticatedUser(request) {
     bearerMatch?.[1]?.trim() || null;
 
   if (bearerToken) {
-    const tokenClient = createClient(
-      supabaseUrl,
-      supabasePublicKey,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      }
-    );
+    const tokenClient =
+      createClient(
+        supabaseUrl,
+        supabasePublicKey,
+        {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false,
+          },
+        }
+      );
 
     const {
       data: { user },
       error,
-    } = await tokenClient.auth.getUser(
-      bearerToken
-    );
+    } =
+      await tokenClient.auth.getUser(
+        bearerToken
+      );
 
     if (!error && user) {
       console.log(
@@ -102,30 +106,34 @@ async function getAuthenticatedUser(request) {
      2. bmg_access_token cookie
   ------------------------------------------------------- */
 
-  const cookieStore = await cookies();
+  const cookieStore =
+    await cookies();
 
   const accessTokenCookie =
-    cookieStore.get("bmg_access_token")?.value ||
-    null;
+    cookieStore.get(
+      "bmg_access_token"
+    )?.value || null;
 
   if (accessTokenCookie) {
-    const tokenClient = createClient(
-      supabaseUrl,
-      supabasePublicKey,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      }
-    );
+    const tokenClient =
+      createClient(
+        supabaseUrl,
+        supabasePublicKey,
+        {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false,
+          },
+        }
+      );
 
     const {
       data: { user },
       error,
-    } = await tokenClient.auth.getUser(
-      accessTokenCookie
-    );
+    } =
+      await tokenClient.auth.getUser(
+        accessTokenCookie
+      );
 
     if (!error && user) {
       console.log(
@@ -147,38 +155,44 @@ async function getAuthenticatedUser(request) {
      3. Supabase SSR session
   ------------------------------------------------------- */
 
-  const supabase = createServerClient(
-    supabaseUrl,
-    supabasePublicKey,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
+  const supabase =
+    createServerClient(
+      supabaseUrl,
+      supabasePublicKey,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
 
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(
-              ({ name, value, options }) => {
-                cookieStore.set(
+          setAll(cookiesToSet) {
+            try {
+              cookiesToSet.forEach(
+                ({
                   name,
                   value,
-                  options
-                );
-              }
-            );
-          } catch {
-            // Cookie writes may not be available.
-          }
+                  options,
+                }) => {
+                  cookieStore.set(
+                    name,
+                    value,
+                    options
+                  );
+                }
+              );
+            } catch {
+              // Cookie writes may not be available.
+            }
+          },
         },
-      },
-    }
-  );
+      }
+    );
 
   const {
     data: { user },
     error,
-  } = await supabase.auth.getUser();
+  } =
+    await supabase.auth.getUser();
 
   if (error || !user) {
     console.error(
@@ -202,15 +216,20 @@ async function getAuthenticatedUser(request) {
    GOVERNMENT ADMIN AUTHORIZATION
 ========================================================= */
 
-async function requireGovernmentAdmin(request) {
+async function requireGovernmentAdmin(
+  request
+) {
   const user =
-    await getAuthenticatedUser(request);
+    await getAuthenticatedUser(
+      request
+    );
 
   if (!user) {
     return {
       ok: false,
       status: 401,
-      error: "Authentication required.",
+      error:
+        "Authentication required.",
     };
   }
 
@@ -220,19 +239,26 @@ async function requireGovernmentAdmin(request) {
   let {
     data: profile,
     error: profileError,
-  } = await adminSupabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .maybeSingle();
+  } =
+    await adminSupabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .maybeSingle();
+
+  /*
+   * Some project schemas use user_id/auth_user_id
+   * instead of profiles.id.
+   */
 
   if (!profile && !profileError) {
     const {
       data: allProfiles,
       error: allProfilesError,
-    } = await adminSupabase
-      .from("profiles")
-      .select("*");
+    } =
+      await adminSupabase
+        .from("profiles")
+        .select("*");
 
     if (allProfilesError) {
       console.error(
@@ -248,35 +274,78 @@ async function requireGovernmentAdmin(request) {
       };
     }
 
-    if (allProfiles?.length === 1) {
-      profile = allProfiles[0];
-    } else {
-      profile =
-        allProfiles?.find((p) => {
-          const role = String(
-            p.role || ""
-          ).toLowerCase();
+    const userId =
+      String(user.id)
+        .trim()
+        .toLowerCase();
 
-          const userType = String(
-            p.user_type || ""
-          ).toLowerCase();
+    const email =
+      String(user.email || "")
+        .trim()
+        .toLowerCase();
 
-          const department = String(
-            p.department || ""
-          ).toLowerCase();
-
-          return (
-            role.includes("admin") ||
-            role.includes("government") ||
-            role.includes("govt") ||
-            userType.includes("admin") ||
-            userType.includes("government") ||
-            userType.includes("govt") ||
-            department.includes("government") ||
-            department.includes("govt")
+    profile =
+      allProfiles?.find(
+        (p) => {
+          const values = Object.entries(
+            p || {}
           );
-        }) || null;
-    }
+
+          return values.some(
+            ([key, value]) => {
+              if (
+                value === null ||
+                value === undefined ||
+                typeof value ===
+                  "object"
+              ) {
+                return false;
+              }
+
+              const normalized =
+                String(value)
+                  .trim()
+                  .toLowerCase();
+
+              if (
+                [
+                  "id",
+                  "user_id",
+                  "auth_user_id",
+                  "uid",
+                  "userid",
+                  "authuserid",
+                ].includes(
+                  key.toLowerCase()
+                )
+              ) {
+                return (
+                  normalized ===
+                  userId
+                );
+              }
+
+              if (
+                [
+                  "email",
+                  "user_email",
+                  "account_email",
+                  "login_email",
+                ].includes(
+                  key.toLowerCase()
+                )
+              ) {
+                return (
+                  normalized ===
+                  email
+                );
+              }
+
+              return false;
+            }
+          );
+        }
+      ) || null;
   }
 
   if (profileError) {
@@ -312,7 +381,9 @@ async function requireGovernmentAdmin(request) {
 
   if (
     profile.is_active === false ||
-    String(profile.is_active).toLowerCase() ===
+    String(
+      profile.is_active
+    ).toLowerCase() ===
       "false"
   ) {
     return {
@@ -323,17 +394,20 @@ async function requireGovernmentAdmin(request) {
     };
   }
 
-  const role = String(
-    profile.role || ""
-  ).toLowerCase();
+  const role =
+    String(
+      profile.role || ""
+    ).toLowerCase();
 
-  const userType = String(
-    profile.user_type || ""
-  ).toLowerCase();
+  const userType =
+    String(
+      profile.user_type || ""
+    ).toLowerCase();
 
-  const department = String(
-    profile.department || ""
-  ).toLowerCase();
+  const department =
+    String(
+      profile.department || ""
+    ).toLowerCase();
 
   const isAdmin =
     role.includes("admin") ||
@@ -352,8 +426,10 @@ async function requireGovernmentAdmin(request) {
         userId: user.id,
         profileId: profile.id,
         role: profile.role,
-        userType: profile.user_type,
-        department: profile.department,
+        userType:
+          profile.user_type,
+        department:
+          profile.department,
       }
     );
 
@@ -387,11 +463,12 @@ async function findActualMaterial(
   const {
     data,
     error,
-  } = await adminSupabase
-    .from("materials")
-    .select("*")
-    .eq("id", materialId)
-    .maybeSingle();
+  } =
+    await adminSupabase
+      .from("materials")
+      .select("*")
+      .eq("id", materialId)
+      .maybeSingle();
 
   if (error) {
     throw new Error(
@@ -404,13 +481,6 @@ async function findActualMaterial(
 
 /* =========================================================
    LOAD COMPANY MATERIAL
-
-   company_materials DOES NOT HAVE an "id" column.
-
-   Relationship:
-   ai_code_approvals.company_material_id
-       ->
-   company_materials.material_id
 ========================================================= */
 
 async function getCompanyMaterial(
@@ -421,18 +491,27 @@ async function getCompanyMaterial(
     return null;
   }
 
+  /*
+   * Your current schema uses:
+   *
+   * company_materials.material_id
+   *
+   * as the material relationship.
+   */
+
   const {
     data,
     error,
-  } = await adminSupabase
-    .from("company_materials")
-    .select("*")
-    .eq(
-      "material_id",
-      companyMaterialId
-    )
-    .limit(1)
-    .maybeSingle();
+  } =
+    await adminSupabase
+      .from("company_materials")
+      .select("*")
+      .eq(
+        "material_id",
+        companyMaterialId
+      )
+      .limit(1)
+      .maybeSingle();
 
   if (error) {
     throw new Error(
@@ -441,6 +520,584 @@ async function getCompanyMaterial(
   }
 
   return data || null;
+}
+
+/* =========================================================
+   FIND COMPANY
+========================================================= */
+
+async function findCompany(
+  adminSupabase,
+  companyId,
+  companyMaterial,
+  approval
+) {
+  const {
+    data: companies,
+    error,
+  } =
+    await adminSupabase
+      .from("companies")
+      .select("*");
+
+  if (error) {
+    console.error(
+      "COMPANY LOOKUP ERROR:",
+      error
+    );
+
+    return null;
+  }
+
+  if (!companies?.length) {
+    return null;
+  }
+
+  const target =
+    String(companyId || "")
+      .trim()
+      .toLowerCase();
+
+  if (target) {
+    for (const company of companies) {
+      for (const [
+        key,
+        value,
+      ] of Object.entries(
+        company || {}
+      )) {
+        if (
+          value === null ||
+          value === undefined ||
+          typeof value ===
+            "object"
+        ) {
+          continue;
+        }
+
+        if (
+          String(value)
+            .trim()
+            .toLowerCase() ===
+          target
+        ) {
+          console.log(
+            "COMPANY MATCHED USING COLUMN:",
+            key
+          );
+
+          return company;
+        }
+      }
+    }
+  }
+
+  /*
+   * Fallback to company information already
+   * stored with the approval/material.
+   */
+
+  const approvalCompanyName =
+    approval?.company_name ||
+    companyMaterial?.company_name;
+
+  if (approvalCompanyName) {
+    const normalized =
+      String(
+        approvalCompanyName
+      )
+        .trim()
+        .toLowerCase();
+
+    const match =
+      companies.find(
+        (company) => {
+          const names = [
+            company?.name,
+            company?.company_name,
+            company?.title,
+            company?.display_name,
+          ]
+            .filter(Boolean)
+            .map((value) =>
+              String(value)
+                .trim()
+                .toLowerCase()
+            );
+
+          return names.includes(
+            normalized
+          );
+        }
+      );
+
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+   FIND BMG
+========================================================= */
+
+async function findBMGByCode(
+  adminSupabase,
+  standardCode
+) {
+  if (!standardCode) {
+    return null;
+  }
+
+  const code =
+    String(standardCode)
+      .trim();
+
+  if (!code) {
+    return null;
+  }
+
+  /*
+   * BMG code is the global technical identity.
+   *
+   * Search several likely code columns without
+   * assuming only one exact schema.
+   */
+
+  const columns = [
+    "bmg_code",
+    "standard_code",
+    "code",
+    "material_code",
+    "identity_code",
+  ];
+
+  for (const column of columns) {
+    try {
+      const {
+        data,
+        error,
+      } =
+        await adminSupabase
+          .from("bmg_materials")
+          .select("*")
+          .eq(column, code)
+          .limit(1)
+          .maybeSingle();
+
+      if (!error && data) {
+        return data;
+      }
+    } catch {
+      // Ignore unsupported columns.
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+   FIND BMG BY MATERIAL MAPPING
+========================================================= */
+
+async function findMappedBMG(
+  adminSupabase,
+  materialId
+) {
+  if (!materialId) {
+    return null;
+  }
+
+  try {
+    const {
+      data: mapping,
+      error,
+    } =
+      await adminSupabase
+        .from("material_bmg_mapping")
+        .select("*")
+        .eq(
+          "material_id",
+          materialId
+        )
+        .eq(
+          "is_active",
+          true
+        )
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        )
+        .limit(1)
+        .maybeSingle();
+
+    if (
+      !error &&
+      mapping
+    ) {
+      return mapping;
+    }
+  } catch {
+    // Continue to direct materials lookup.
+  }
+
+  return null;
+}
+
+/* =========================================================
+   FINALIZE BMG
+========================================================= */
+
+async function finalizeBMGMapping(
+  adminSupabase,
+  approval,
+  adminUser
+) {
+  const materialId =
+    approval?.company_material_id;
+
+  if (!materialId) {
+    throw new Error(
+      "The approval record does not contain a material ID."
+    );
+  }
+
+  const material =
+    await findActualMaterial(
+      adminSupabase,
+      materialId
+    );
+
+  if (!material) {
+    throw new Error(
+      "The material associated with this approval was not found."
+    );
+  }
+
+  /*
+   * The AI-assigned code comes from the approval.
+   */
+
+  const standardCode =
+    String(
+      approval.ai_standard_code ||
+        approval.bmg_code ||
+        approval.standard_code ||
+        ""
+    ).trim();
+
+  if (!standardCode) {
+    throw new Error(
+      "No AI/BMG standard code is present on this approval."
+    );
+  }
+
+  /*
+   * First try to find the existing global BMG.
+   *
+   * We MUST reuse the same BMG code for technically
+   * equivalent materials across companies.
+   */
+
+  let bmg =
+    await findBMGByCode(
+      adminSupabase,
+      standardCode
+    );
+
+  /*
+   * If BMG already exists, use it.
+   */
+
+  if (bmg) {
+    console.log(
+      "EXISTING GLOBAL BMG FOUND:",
+      {
+        bmgId: bmg.id,
+        standardCode,
+      }
+    );
+  } else {
+    /*
+     * If it does not exist, create the BMG record.
+     *
+     * Try the standard schema first.
+     */
+
+    const insertPayload = {
+      bmg_code: standardCode,
+      status: "APPROVED",
+    };
+
+    /*
+     * Add a useful name/description when the
+     * corresponding fields are available.
+     */
+
+    const possibleName =
+      material.part_name ||
+      material.name ||
+      material.description ||
+      approval.part_name ||
+      standardCode;
+
+    insertPayload.name =
+      possibleName;
+
+    insertPayload.description =
+      material.description ||
+      material.specifications ||
+      approval.part_name ||
+      null;
+
+    let {
+      data: insertedBMG,
+      error: insertError,
+    } =
+      await adminSupabase
+        .from("bmg_materials")
+        .insert(
+          insertPayload
+        )
+        .select("*")
+        .maybeSingle();
+
+    /*
+     * Some schemas may not have name/description.
+     * Retry using only the essential fields.
+     */
+
+    if (insertError) {
+      console.error(
+        "BMG FULL INSERT FAILED:",
+        insertError
+      );
+
+      const {
+        data: retryBMG,
+        error: retryError,
+      } =
+        await adminSupabase
+          .from("bmg_materials")
+          .insert({
+            bmg_code:
+              standardCode,
+            status:
+              "APPROVED",
+          })
+          .select("*")
+          .maybeSingle();
+
+      if (retryError) {
+        throw new Error(
+          `Unable to create BMG standard: ${retryError.message}`
+        );
+      }
+
+      insertedBMG =
+        retryBMG;
+    }
+
+    bmg =
+      insertedBMG;
+
+    console.log(
+      "NEW GLOBAL BMG CREATED:",
+      {
+        bmgId: bmg?.id,
+        standardCode,
+      }
+    );
+  }
+
+  if (!bmg) {
+    throw new Error(
+      "BMG standard could not be loaded or created."
+    );
+  }
+
+  /*
+   * -------------------------------------------------------
+   * CREATE / UPDATE MATERIAL → BMG MAPPING
+   * -------------------------------------------------------
+   */
+
+  const mappingPayload = {
+    material_id: materialId,
+    bmg_id: bmg.id,
+    is_active: true,
+  };
+
+  /*
+   * Include approval metadata where supported.
+   */
+
+  mappingPayload.mapping_status =
+    "APPROVED";
+
+  mappingPayload.source =
+    "GOVERNMENT_APPROVED";
+
+  mappingPayload.approved_by =
+    adminUser.id;
+
+  mappingPayload.approved_at =
+    new Date().toISOString();
+
+  let mapping = null;
+
+  try {
+    /*
+     * First deactivate previous active mappings.
+     */
+
+    await adminSupabase
+      .from(
+        "material_bmg_mapping"
+      )
+      .update({
+        is_active: false,
+      })
+      .eq(
+        "material_id",
+        materialId
+      )
+      .eq(
+        "is_active",
+        true
+      );
+
+    const {
+      data,
+      error,
+    } =
+      await adminSupabase
+        .from(
+          "material_bmg_mapping"
+        )
+        .insert(
+          mappingPayload
+        )
+        .select("*")
+        .maybeSingle();
+
+    if (error) {
+      console.error(
+        "BMG MAPPING FULL INSERT FAILED:",
+        error
+      );
+
+      /*
+       * Retry with only fields that are fundamental
+       * to the mapping.
+       */
+
+      const {
+        data: retryMapping,
+        error: retryError,
+      } =
+        await adminSupabase
+          .from(
+            "material_bmg_mapping"
+          )
+          .insert({
+            material_id:
+              materialId,
+            bmg_id:
+              bmg.id,
+            is_active:
+              true,
+          })
+          .select("*")
+          .maybeSingle();
+
+      if (retryError) {
+        throw new Error(
+          `Unable to create material-BMG mapping: ${retryError.message}`
+        );
+      }
+
+      mapping =
+        retryMapping;
+    } else {
+      mapping = data;
+    }
+  } catch (error) {
+    throw new Error(
+      error?.message ||
+        "Unable to create material-BMG mapping."
+    );
+  }
+
+  /*
+   * -------------------------------------------------------
+   * UPDATE MATERIAL
+   * -------------------------------------------------------
+   */
+
+  let materialUpdateSucceeded =
+    false;
+
+  try {
+    const {
+      error,
+    } =
+      await adminSupabase
+        .from("materials")
+        .update({
+          bmg_id:
+            bmg.id,
+        })
+        .eq(
+          "id",
+          materialId
+        );
+
+    if (!error) {
+      materialUpdateSucceeded =
+        true;
+    } else {
+      console.error(
+        "MATERIAL BMG_ID UPDATE ERROR:",
+        error
+      );
+    }
+  } catch (error) {
+    console.error(
+      "MATERIAL BMG_ID UPDATE EXCEPTION:",
+      error
+    );
+  }
+
+  /*
+   * The mapping is the authoritative relationship.
+   * materials.bmg_id is updated when that column exists.
+   */
+
+  console.log(
+    "BMG MAPPING FINALIZED:",
+    {
+      materialId,
+      bmgId: bmg.id,
+      standardCode,
+      materialUpdateSucceeded,
+      mappingId:
+        mapping?.id || null,
+      approvedBy:
+        adminUser.id,
+    }
+  );
+
+  return {
+    material,
+    bmg,
+    mapping,
+    standardCode,
+  };
 }
 
 /* =========================================================
@@ -455,20 +1112,20 @@ async function removeMaterialFromAISearch(
     return;
   }
 
-  const {
-    error: mappingDeleteError,
-  } = await adminSupabase
-    .from("material_ncs_mapping")
-    .delete()
-    .eq(
-      "material_id",
-      materialId
-    );
-
-  if (mappingDeleteError) {
+  try {
+    await adminSupabase
+      .from(
+        "material_ncs_mapping"
+      )
+      .delete()
+      .eq(
+        "material_id",
+        materialId
+      );
+  } catch (error) {
     console.error(
-      "AI SEARCH MAPPING DELETE ERROR:",
-      mappingDeleteError
+      "AI SEARCH NCS MAPPING DELETE ERROR:",
+      error
     );
   }
 
@@ -482,13 +1139,14 @@ async function removeMaterialFromAISearch(
     try {
       const {
         error,
-      } = await adminSupabase
-        .from(table)
-        .delete()
-        .eq(
-          "material_id",
-          materialId
-        );
+      } =
+        await adminSupabase
+          .from(table)
+          .delete()
+          .eq(
+            "material_id",
+            materialId
+          );
 
       if (error) {
         console.log(
@@ -524,32 +1182,53 @@ async function purgeMaterial(
     materialId
   );
 
-  const {
-    error: mappingError,
-  } = await adminSupabase
-    .from("material_ncs_mapping")
-    .delete()
-    .eq(
-      "material_id",
-      materialId
+  try {
+    await adminSupabase
+      .from(
+        "material_bmg_mapping"
+      )
+      .delete()
+      .eq(
+        "material_id",
+        materialId
+      );
+  } catch (error) {
+    console.error(
+      "BMG MAPPING DELETE ERROR:",
+      error
     );
+  }
 
-  if (mappingError) {
+  try {
+    await adminSupabase
+      .from(
+        "material_ncs_mapping"
+      )
+      .delete()
+      .eq(
+        "material_id",
+        materialId
+      );
+  } catch (error) {
     console.error(
       "MATERIAL NCS MAPPING DELETE ERROR:",
-      mappingError
+      error
     );
   }
 
   const {
-    error: approvalDeleteError,
-  } = await adminSupabase
-    .from("ai_code_approvals")
-    .delete()
-    .eq(
-      "company_material_id",
-      materialId
-    );
+    error:
+      approvalDeleteError,
+  } =
+    await adminSupabase
+      .from(
+        "ai_code_approvals"
+      )
+      .delete()
+      .eq(
+        "company_material_id",
+        materialId
+      );
 
   if (approvalDeleteError) {
     console.error(
@@ -559,14 +1238,18 @@ async function purgeMaterial(
   }
 
   const {
-    error: companyMaterialDeleteError,
-  } = await adminSupabase
-    .from("company_materials")
-    .delete()
-    .eq(
-      "material_id",
-      materialId
-    );
+    error:
+      companyMaterialDeleteError,
+  } =
+    await adminSupabase
+      .from(
+        "company_materials"
+      )
+      .delete()
+      .eq(
+        "material_id",
+        materialId
+      );
 
   if (companyMaterialDeleteError) {
     throw new Error(
@@ -575,14 +1258,16 @@ async function purgeMaterial(
   }
 
   const {
-    error: materialDeleteError,
-  } = await adminSupabase
-    .from("materials")
-    .delete()
-    .eq(
-      "id",
-      materialId
-    );
+    error:
+      materialDeleteError,
+  } =
+    await adminSupabase
+      .from("materials")
+      .delete()
+      .eq(
+        "id",
+        materialId
+      );
 
   if (materialDeleteError) {
     throw new Error(
@@ -595,16 +1280,6 @@ async function purgeMaterial(
 
 /* =========================================================
    APPROVE MATERIAL
-
-   IMPORTANT:
-
-   approved_by is a UUID column.
-
-   Therefore:
-   approved_by = adminUser.id
-
-   NOT:
-   approved_by = adminUser.email
 ========================================================= */
 
 async function approveMaterial(
@@ -621,11 +1296,17 @@ async function approveMaterial(
   const {
     data: approval,
     error: approvalError,
-  } = await adminSupabase
-    .from("ai_code_approvals")
-    .select("*")
-    .eq("id", approvalId)
-    .maybeSingle();
+  } =
+    await adminSupabase
+      .from(
+        "ai_code_approvals"
+      )
+      .select("*")
+      .eq(
+        "id",
+        approvalId
+      )
+      .maybeSingle();
 
   if (approvalError) {
     throw new Error(
@@ -645,29 +1326,97 @@ async function approveMaterial(
     );
   }
 
+  /*
+   * Do not approve an already rejected record.
+   */
+
+  const currentStatus =
+    String(
+      approval.approval_status ||
+        ""
+    )
+      .trim()
+      .toUpperCase();
+
+  if (
+    currentStatus ===
+    "REJECTED"
+  ) {
+    throw new Error(
+      "A rejected approval cannot be approved."
+    );
+  }
+
+  /*
+   * -------------------------------------------------------
+   * FIRST FINALIZE BMG
+   * -------------------------------------------------------
+   *
+   * This is the important part.
+   *
+   * Government approval now turns the AI proposal into
+   * an actual material → global BMG relationship.
+   */
+
+  const finalized =
+    await finalizeBMGMapping(
+      adminSupabase,
+      approval,
+      adminUser
+    );
+
   const approvedBy =
     adminUser.id;
 
   const approvedAt =
     new Date().toISOString();
 
+  /*
+   * -------------------------------------------------------
+   * THEN MARK APPROVAL AS APPROVED
+   * -------------------------------------------------------
+   */
+
   const {
-    data: updatedApproval,
-    error: updateError,
-  } = await adminSupabase
-    .from("ai_code_approvals")
-    .update({
-      approval_status: "APPROVED",
-      approved_by: approvedBy,
-      approved_at: approvedAt,
-    })
-    .eq("id", approvalId)
-    .select("*")
-    .maybeSingle();
+    data:
+      updatedApproval,
+    error:
+      updateError,
+  } =
+    await adminSupabase
+      .from(
+        "ai_code_approvals"
+      )
+      .update({
+        approval_status:
+          "APPROVED",
+
+        approved_by:
+          approvedBy,
+
+        approved_at:
+          approvedAt,
+      })
+      .eq(
+        "id",
+        approvalId
+      )
+      .select("*")
+      .maybeSingle();
 
   if (updateError) {
+    /*
+     * At this point BMG has already been finalized.
+     * Do not pretend the entire operation failed silently.
+     */
+
+    console.error(
+      "APPROVAL STATUS UPDATE FAILED AFTER BMG FINALIZATION:",
+      updateError
+    );
+
     throw new Error(
-      `Unable to approve material: ${updateError.message}`
+      `BMG was finalized, but approval status could not be updated: ${updateError.message}`
     );
   }
 
@@ -678,11 +1427,15 @@ async function approveMaterial(
   }
 
   console.log(
-    "STANDARDIZATION APPROVED:",
+    "STANDARDIZATION APPROVED AND BMG FINALIZED:",
     {
       approvalId,
-      companyMaterialId:
+      materialId:
         approval.company_material_id,
+      bmgId:
+        finalized.bmg?.id,
+      standardCode:
+        finalized.standardCode,
       approvedBy,
       approvedByEmail:
         adminUser.email,
@@ -691,22 +1444,25 @@ async function approveMaterial(
   );
 
   return {
-    approval: updatedApproval,
+    approval:
+      updatedApproval,
+
+    material:
+      finalized.material,
+
+    bmg:
+      finalized.bmg,
+
+    mapping:
+      finalized.mapping,
+
+    standardCode:
+      finalized.standardCode,
   };
 }
 
 /* =========================================================
    REJECT MATERIAL
-
-   IMPORTANT:
-
-   rejected_by is a UUID column.
-
-   Therefore:
-   rejected_by = adminUser.id
-
-   NOT:
-   rejected_by = adminUser.email
 ========================================================= */
 
 async function rejectMaterial(
@@ -724,11 +1480,17 @@ async function rejectMaterial(
   const {
     data: approval,
     error: approvalError,
-  } = await adminSupabase
-    .from("ai_code_approvals")
-    .select("*")
-    .eq("id", approvalId)
-    .maybeSingle();
+  } =
+    await adminSupabase
+      .from(
+        "ai_code_approvals"
+      )
+      .select("*")
+      .eq(
+        "id",
+        approvalId
+      )
+      .maybeSingle();
 
   if (approvalError) {
     throw new Error(
@@ -748,8 +1510,26 @@ async function rejectMaterial(
     );
   }
 
+  const currentStatus =
+    String(
+      approval.approval_status ||
+        ""
+    )
+      .trim()
+      .toUpperCase();
+
+  if (
+    currentStatus ===
+    "APPROVED"
+  ) {
+    throw new Error(
+      "An approved material cannot be rejected."
+    );
+  }
+
   const rejectionReason =
-    String(reason || "").trim() ||
+    String(reason || "")
+      .trim() ||
     "Rejected by government administrator.";
 
   const rejectedBy =
@@ -759,19 +1539,34 @@ async function rejectMaterial(
     new Date().toISOString();
 
   const {
-    data: updatedApproval,
-    error: updateError,
-  } = await adminSupabase
-    .from("ai_code_approvals")
-    .update({
-      approval_status: "REJECTED",
-      rejected_by: rejectedBy,
-      rejected_at: rejectedAt,
-      rejection_reason: rejectionReason,
-    })
-    .eq("id", approvalId)
-    .select("*")
-    .maybeSingle();
+    data:
+      updatedApproval,
+    error:
+      updateError,
+  } =
+    await adminSupabase
+      .from(
+        "ai_code_approvals"
+      )
+      .update({
+        approval_status:
+          "REJECTED",
+
+        rejected_by:
+          rejectedBy,
+
+        rejected_at:
+          rejectedAt,
+
+        rejection_reason:
+          rejectionReason,
+      })
+      .eq(
+        "id",
+        approvalId
+      )
+      .select("*")
+      .maybeSingle();
 
   if (updateError) {
     throw new Error(
@@ -800,8 +1595,11 @@ async function rejectMaterial(
   );
 
   return {
-    approval: updatedApproval,
-    reason: rejectionReason,
+    approval:
+      updatedApproval,
+
+    reason:
+      rejectionReason,
   };
 }
 
@@ -809,7 +1607,9 @@ async function rejectMaterial(
    GET APPROVAL RECORDS
 ========================================================= */
 
-export async function GET(request) {
+export async function GET(
+  request
+) {
   try {
     const auth =
       await requireGovernmentAdmin(
@@ -823,7 +1623,8 @@ export async function GET(request) {
           error: auth.error,
         },
         {
-          status: auth.status,
+          status:
+            auth.status,
         }
       );
     }
@@ -834,12 +1635,18 @@ export async function GET(request) {
     const {
       data,
       error,
-    } = await adminSupabase
-      .from("ai_code_approvals")
-      .select("*")
-      .order("created_at", {
-        ascending: false,
-      });
+    } =
+      await adminSupabase
+        .from(
+          "ai_code_approvals"
+        )
+        .select("*")
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        );
 
     if (error) {
       throw new Error(
@@ -850,102 +1657,117 @@ export async function GET(request) {
     const approvals =
       data || [];
 
-    const enriched = [];
+    const enriched =
+      [];
+
+    /*
+     * Cache company rows once instead of querying
+     * companies for every approval.
+     */
+
+    let companies = [];
+
+    try {
+      const {
+        data: companyRows,
+      } =
+        await adminSupabase
+          .from("companies")
+          .select("*");
+
+      companies =
+        companyRows || [];
+    } catch {
+      companies = [];
+    }
 
     for (const approval of approvals) {
-      let companyMaterial = null;
-      let material = null;
-      let company = null;
+      let companyMaterial =
+        null;
 
-      /* ---------------------------------------------------
-         COMPANY MATERIAL
-      --------------------------------------------------- */
+      let material =
+        null;
 
-      if (approval.company_material_id) {
-        const {
-          data:
-            companyMaterialData,
-          error:
-            companyMaterialError,
-        } = await adminSupabase
-          .from("company_materials")
-          .select("*")
-          .eq(
-            "material_id",
-            approval.company_material_id
-          )
-          .limit(1)
-          .maybeSingle();
+      let company =
+        null;
 
-        if (!companyMaterialError) {
+      if (
+        approval.company_material_id
+      ) {
+        try {
           companyMaterial =
-            companyMaterialData;
-        } else {
+            await getCompanyMaterial(
+              adminSupabase,
+              approval.company_material_id
+            );
+        } catch (error) {
           console.error(
             "COMPANY MATERIAL LOAD ERROR:",
-            companyMaterialError
+            error
           );
         }
       }
-
-      /* ---------------------------------------------------
-         MATERIAL
-      --------------------------------------------------- */
 
       if (
         companyMaterial?.material_id
       ) {
-        const {
-          data: materialData,
-          error: materialError,
-        } = await adminSupabase
-          .from("materials")
-          .select("*")
-          .eq(
-            "id",
-            companyMaterial.material_id
-          )
-          .maybeSingle();
-
-        if (!materialError) {
+        try {
           material =
-            materialData;
-        } else {
+            await findActualMaterial(
+              adminSupabase,
+              companyMaterial.material_id
+            );
+        } catch (error) {
           console.error(
             "MATERIAL LOAD ERROR:",
-            materialError
+            error
           );
         }
       }
 
-      /* ---------------------------------------------------
-         COMPANY
-      --------------------------------------------------- */
+      /*
+       * Company lookup without assuming companies.id.
+       */
 
       if (
         companyMaterial?.company_id
       ) {
-        const {
-          data: companyData,
-          error: companyError,
-        } = await adminSupabase
-          .from("companies")
-          .select("*")
-          .eq(
-            "id",
+        const target =
+          String(
             companyMaterial.company_id
           )
-          .maybeSingle();
+            .trim()
+            .toLowerCase();
 
-        if (!companyError) {
-          company =
-            companyData;
-        } else {
-          console.error(
-            "COMPANY LOAD ERROR:",
-            companyError
-          );
-        }
+        company =
+          companies.find(
+            (candidate) =>
+              Object.values(
+                candidate || {}
+              ).some(
+                (value) => {
+                  if (
+                    value ===
+                      null ||
+                    value ===
+                      undefined ||
+                    typeof value ===
+                      "object"
+                  ) {
+                    return false;
+                  }
+
+                  return (
+                    String(
+                      value
+                    )
+                      .trim()
+                      .toLowerCase() ===
+                    target
+                  );
+                }
+              )
+          ) || null;
       }
 
       const companyName =
@@ -979,17 +1801,24 @@ export async function GET(request) {
 
       enriched.push({
         ...approval,
+
         company_name:
           companyName,
+
         company_email:
           companyEmail,
+
         part_name:
           partName,
+
         company_material_code:
           companyMaterialCode,
+
         company_material:
           companyMaterial,
+
         material,
+
         company,
       });
     }
@@ -1003,7 +1832,8 @@ export async function GET(request) {
           String(
             item.approval_status ||
               "PENDING"
-          ).toUpperCase() ===
+          )
+            .toUpperCase() ===
           "PENDING"
       ).length;
 
@@ -1013,7 +1843,8 @@ export async function GET(request) {
           String(
             item.approval_status ||
               ""
-          ).toUpperCase() ===
+          )
+            .toUpperCase() ===
           "APPROVED"
       ).length;
 
@@ -1023,14 +1854,16 @@ export async function GET(request) {
           String(
             item.approval_status ||
               ""
-          ).toUpperCase() ===
+          )
+            .toUpperCase() ===
           "REJECTED"
       ).length;
 
     console.log(
       "STANDARDIZATION APPROVALS LOADED:",
       {
-        user: auth.user?.email,
+        user:
+          auth.user?.email,
         total,
         pending,
         approved,
@@ -1040,8 +1873,12 @@ export async function GET(request) {
 
     return Response.json({
       success: true,
-      approvals: enriched,
-      data: enriched,
+
+      approvals:
+        enriched,
+
+      data:
+        enriched,
 
       stats: {
         total,
@@ -1074,7 +1911,9 @@ export async function GET(request) {
    POST
 ========================================================= */
 
-export async function POST(request) {
+export async function POST(
+  request
+) {
   try {
     const auth =
       await requireGovernmentAdmin(
@@ -1088,7 +1927,8 @@ export async function POST(request) {
           error: auth.error,
         },
         {
-          status: auth.status,
+          status:
+            auth.status,
         }
       );
     }
@@ -1096,14 +1936,15 @@ export async function POST(request) {
     const body =
       await request.json();
 
-    const action = String(
-      body.action ||
-        body.type ||
-        body.status ||
-        ""
-    )
-      .trim()
-      .toUpperCase();
+    const action =
+      String(
+        body.action ||
+          body.type ||
+          body.status ||
+          ""
+      )
+        .trim()
+        .toUpperCase();
 
     const approvalId =
       body.approvalId ||
@@ -1130,8 +1971,10 @@ export async function POST(request) {
     ------------------------------------------------------- */
 
     if (
-      action === "APPROVE" ||
-      action === "APPROVED"
+      action ===
+        "APPROVE" ||
+      action ===
+        "APPROVED"
     ) {
       if (!approvalId) {
         return Response.json(
@@ -1155,9 +1998,13 @@ export async function POST(request) {
 
       return Response.json({
         success: true,
-        action: "APPROVE",
+
+        action:
+          "APPROVE",
+
         message:
-          "Material approved successfully.",
+          "Material approved and BMG standard finalized successfully.",
+
         ...result,
       });
     }
@@ -1167,8 +2014,10 @@ export async function POST(request) {
     ------------------------------------------------------- */
 
     if (
-      action === "REJECT" ||
-      action === "REJECTED"
+      action ===
+        "REJECT" ||
+      action ===
+        "REJECTED"
     ) {
       if (!approvalId) {
         return Response.json(
@@ -1193,9 +2042,13 @@ export async function POST(request) {
 
       return Response.json({
         success: true,
-        action: "REJECT",
+
+        action:
+          "REJECT",
+
         message:
           "Material rejected successfully.",
+
         ...result,
       });
     }
@@ -1205,8 +2058,10 @@ export async function POST(request) {
     ------------------------------------------------------- */
 
     if (
-      action === "DELETE" ||
-      action === "REMOVE"
+      action ===
+        "DELETE" ||
+      action ===
+        "REMOVE"
     ) {
       let resolvedMaterialId =
         materialId;
@@ -1217,17 +2072,21 @@ export async function POST(request) {
       ) {
         const {
           data: approval,
-          error: approvalError,
-        } = await adminSupabase
-          .from("ai_code_approvals")
-          .select(
-            "company_material_id"
-          )
-          .eq(
-            "id",
-            approvalId
-          )
-          .maybeSingle();
+          error:
+            approvalError,
+        } =
+          await adminSupabase
+            .from(
+              "ai_code_approvals"
+            )
+            .select(
+              "company_material_id"
+            )
+            .eq(
+              "id",
+              approvalId
+            )
+            .maybeSingle();
 
         if (approvalError) {
           throw new Error(
@@ -1300,9 +2159,13 @@ export async function POST(request) {
 
       return Response.json({
         success: true,
-        action: "DELETE",
+
+        action:
+          "DELETE",
+
         message:
           "Material deleted successfully.",
+
         materialId:
           resolvedMaterialId,
       });
@@ -1342,7 +2205,9 @@ export async function POST(request) {
    DELETE HTTP METHOD
 ========================================================= */
 
-export async function DELETE(request) {
+export async function DELETE(
+  request
+) {
   try {
     const auth =
       await requireGovernmentAdmin(
@@ -1356,7 +2221,8 @@ export async function DELETE(request) {
           error: auth.error,
         },
         {
-          status: auth.status,
+          status:
+            auth.status,
         }
       );
     }
@@ -1365,7 +2231,9 @@ export async function DELETE(request) {
       getAdminSupabase();
 
     const url =
-      new URL(request.url);
+      new URL(
+        request.url
+      );
 
     let materialId =
       url.searchParams.get(
@@ -1412,16 +2280,19 @@ export async function DELETE(request) {
       const {
         data: approval,
         error,
-      } = await adminSupabase
-        .from("ai_code_approvals")
-        .select(
-          "company_material_id"
-        )
-        .eq(
-          "id",
-          approvalId
-        )
-        .maybeSingle();
+      } =
+        await adminSupabase
+          .from(
+            "ai_code_approvals"
+          )
+          .select(
+            "company_material_id"
+          )
+          .eq(
+            "id",
+            approvalId
+          )
+          .maybeSingle();
 
       if (error) {
         throw new Error(
@@ -1493,8 +2364,10 @@ export async function DELETE(request) {
 
     return Response.json({
       success: true,
+
       message:
         "Material deleted successfully.",
+
       materialId,
     });
   } catch (error) {

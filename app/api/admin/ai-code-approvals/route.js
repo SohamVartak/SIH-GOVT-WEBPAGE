@@ -3,6 +3,9 @@ import { cookies } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
   process.env.SUPABASE_URL;
@@ -54,9 +57,6 @@ function getAdminSupabase() {
 --------------------------------------------------------- */
 
 async function getAccessToken(request) {
-  /*
-   * 1. Authorization header
-   */
   const authorization =
     request?.headers?.get("authorization");
 
@@ -77,9 +77,6 @@ async function getAccessToken(request) {
     }
   }
 
-  /*
-   * 2. Dedicated HttpOnly cookie
-   */
   try {
     const cookieStore = await cookies();
 
@@ -100,9 +97,6 @@ async function getAccessToken(request) {
     );
   }
 
-  /*
-   * 3. Supabase SSR cookies
-   */
   try {
     if (
       SUPABASE_URL &&
@@ -120,13 +114,7 @@ async function getAccessToken(request) {
                 return cookieStore.getAll();
               },
 
-              setAll() {
-                /*
-                 * Route handlers cannot safely mutate the
-                 * original cookie store here. The existing
-                 * session is sufficient for this request.
-                 */
-              },
+              setAll() {},
             },
           }
         );
@@ -169,20 +157,6 @@ async function findUserProfile(
   adminSupabase,
   user
 ) {
-  /*
-   * We intentionally load profiles without assuming which
-   * column contains the Supabase Auth UUID.
-   *
-   * Different versions of the application may use:
-   *
-   *   id
-   *   user_id
-   *   auth_user_id
-   *   uid
-   *
-   * We also support matching by email.
-   */
-
   const {
     data: profiles,
     error: profileError,
@@ -201,7 +175,10 @@ async function findUserProfile(
     );
   }
 
-  if (!profiles || profiles.length === 0) {
+  if (
+    !profiles ||
+    profiles.length === 0
+  ) {
     console.error(
       "ADMIN APPROVAL PROFILE TABLE IS EMPTY."
     );
@@ -219,9 +196,6 @@ async function findUserProfile(
       .trim()
       .toLowerCase();
 
-  /*
-   * First try every common UUID column.
-   */
   const uuidColumnCandidates = [
     "id",
     "user_id",
@@ -258,9 +232,6 @@ async function findUserProfile(
     }
   }
 
-  /*
-   * Then try common email columns.
-   */
   const emailColumnCandidates = [
     "email",
     "user_email",
@@ -295,9 +266,6 @@ async function findUserProfile(
     }
   }
 
-  /*
-   * Nothing matched.
-   */
   console.error(
     "ADMIN PROFILE NOT FOUND FOR AUTH USER:",
     {
@@ -353,9 +321,6 @@ async function requireGovernmentAdmin(request) {
     };
   }
 
-  /*
-   * Verify the Supabase Auth token.
-   */
   const authSupabase =
     createClient(
       SUPABASE_URL,
@@ -408,9 +373,6 @@ async function requireGovernmentAdmin(request) {
     }
   );
 
-  /*
-   * Load profile using service-role client.
-   */
   const adminSupabase =
     getAdminSupabase();
 
@@ -468,12 +430,6 @@ async function requireGovernmentAdmin(request) {
       user_type: profile.user_type,
     }
   );
-
-  /*
-   * -------------------------------------------------------
-   * ROLE CHECK
-   * -------------------------------------------------------
-   */
 
   const possibleRoles = [
     profile.role,
@@ -536,9 +492,6 @@ async function requireGovernmentAdmin(request) {
     };
   }
 
-  /*
-   * Respect inactive profiles.
-   */
   if (
     profile.is_active === false
   ) {
@@ -589,6 +542,8 @@ function normalizeApproval(
       approval.company_name ||
       company?.name ||
       company?.company_name ||
+      company?.title ||
+      company?.display_name ||
       companyMaterial?.company_name ||
       "",
 
@@ -599,12 +554,16 @@ function normalizeApproval(
       approval.company_material_code ||
       companyMaterial?.material_code ||
       companyMaterial?.company_material_code ||
+      companyMaterial?.code ||
       material?.material_number ||
       "",
 
     part_name:
       approval.part_name ||
+      material?.part_name ||
+      material?.name ||
       material?.description ||
+      companyMaterial?.part_name ||
       "",
 
     ai_standard_code:
@@ -621,11 +580,80 @@ function normalizeApproval(
       approval.company_email ||
       company?.email ||
       company?.company_email ||
+      companyMaterial?.company_email ||
       "",
 
     email_status:
       approval.email_status || null,
   };
+}
+
+/* ---------------------------------------------------------
+   MATCH COMPANY WITHOUT ASSUMING companies.id
+--------------------------------------------------------- */
+
+function findCompanyByCompanyId(
+  companies,
+  companyId
+) {
+  if (
+    !companyId ||
+    !Array.isArray(companies)
+  ) {
+    return null;
+  }
+
+  const target =
+    String(companyId)
+      .trim()
+      .toLowerCase();
+
+  /*
+   * We deliberately do NOT assume the companies table
+   * has an "id" column.
+   *
+   * Instead, compare the supplied company_id against
+   * every scalar value in each company row.
+   *
+   * This makes the lookup compatible with schemas using
+   * company_id, company_code, uuid, code, etc.
+   */
+
+  for (const company of companies) {
+    if (!company) {
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(
+      company
+    )) {
+      if (
+        value === null ||
+        value === undefined ||
+        typeof value === "object"
+      ) {
+        continue;
+      }
+
+      const candidate =
+        String(value)
+          .trim()
+          .toLowerCase();
+
+      if (
+        candidate === target
+      ) {
+        console.log(
+          "COMPANY MATCHED USING COLUMN:",
+          key
+        );
+
+        return company;
+      }
+    }
+  }
+
+  return null;
 }
 
 /* ---------------------------------------------------------
@@ -660,6 +688,7 @@ export async function GET(request) {
     /*
      * Load approval queue.
      */
+
     let approvalQuery =
       adminSupabase
         .from("ai_code_approvals")
@@ -703,14 +732,11 @@ export async function GET(request) {
       approvalRows || [];
 
     /*
-     * IMPORTANT:
+     * company_materials lookup
      *
      * ai_code_approvals.company_material_id
-     * points to:
-     *
+     * ->
      * company_materials.material_id
-     *
-     * It does NOT point directly to materials.id.
      */
 
     const companyMaterialIds =
@@ -766,10 +792,11 @@ export async function GET(request) {
     }
 
     /*
-     * Get actual materials.
+     * Materials
      *
      * company_materials.material_id
-     * -> materials.id
+     * ->
+     * materials.id
      */
 
     const materialIds =
@@ -825,60 +852,63 @@ export async function GET(request) {
     }
 
     /*
-     * Get companies.
+     * Companies
+     *
+     * IMPORTANT:
+     *
+     * Do NOT use:
+     *
+     *   .in("id", companyIds)
+     *
+     * because the companies table does not
+     * contain an id column.
+     *
+     * Instead, load the complete company rows and
+     * match company_materials.company_id against
+     * their actual scalar values.
      */
-
-    const companyIds =
-      [
-        ...new Set(
-          companyMaterials
-            .map(
-              (row) =>
-                row.company_id
-            )
-            .filter(
-              (id) =>
-                id !== null &&
-                id !== undefined
-            )
-        ),
-      ];
 
     let companies = [];
 
-    if (
-      companyIds.length > 0
-    ) {
-      const {
-        data,
-        error,
-      } = await adminSupabase
-        .from("companies")
-        .select("*")
-        .in(
-          "id",
-          companyIds
-        );
+    const {
+      data: companyRows,
+      error: companyError,
+    } = await adminSupabase
+      .from("companies")
+      .select("*");
 
-      if (error) {
-        console.error(
-          "COMPANIES QUERY ERROR:",
-          error
-        );
+    if (companyError) {
+      console.error(
+        "COMPANIES QUERY ERROR:",
+        companyError
+      );
 
-        return json(
-          {
-            success: false,
-            error:
-              error.message,
-          },
-          500
-        );
-      }
-
-      companies =
-        data || [];
+      return json(
+        {
+          success: false,
+          error:
+            companyError.message,
+        },
+        500
+      );
     }
+
+    companies =
+      companyRows || [];
+
+    console.log(
+      "COMPANIES LOADED:",
+      {
+        count:
+          companies.length,
+        columns:
+          companies[0]
+            ? Object.keys(
+                companies[0]
+              )
+            : [],
+      }
+    );
 
     /*
      * Enrich approval records.
@@ -896,7 +926,7 @@ export async function GET(request) {
                 String(
                   approval.company_material_id
                 )
-            );
+            ) || null;
 
           const material =
             companyMaterial
@@ -908,19 +938,14 @@ export async function GET(request) {
                     String(
                       companyMaterial.material_id
                     )
-                )
+                ) || null
               : null;
 
           const company =
             companyMaterial
-              ? companies.find(
-                  (row) =>
-                    String(
-                      row.id
-                    ) ===
-                    String(
-                      companyMaterial.company_id
-                    )
+              ? findCompanyByCompanyId(
+                  companies,
+                  companyMaterial.company_id
                 )
               : null;
 
@@ -934,7 +959,7 @@ export async function GET(request) {
       );
 
     /*
-     * Counts.
+     * Counts
      */
 
     const total =
@@ -970,7 +995,8 @@ export async function GET(request) {
     console.log(
       "ADMIN APPROVALS LOADED:",
       {
-        user: auth.user.email,
+        user:
+          auth.user.email,
         total,
         pending,
         approved,
@@ -981,7 +1007,19 @@ export async function GET(request) {
     return json({
       success: true,
       approvals: enriched,
+
+      /*
+       * Keep both names so existing frontend versions
+       * continue to work.
+       */
       counts: {
+        total,
+        pending,
+        approved,
+        rejected,
+      },
+
+      stats: {
         total,
         pending,
         approved,
@@ -1040,6 +1078,7 @@ export async function POST(request) {
     const rejectionReason =
       body?.rejectionReason ||
       body?.rejection_reason ||
+      body?.reason ||
       "";
 
     if (!approvalId) {
@@ -1071,13 +1110,13 @@ export async function POST(request) {
     }
 
     /*
-     * Forward the operation to the central
-     * standardization-action route.
+     * Forward to the central standardization-action route.
      */
 
     const headers = {
       "Content-Type":
         "application/json",
+
       Authorization:
         `Bearer ${auth.accessToken}`,
     };
@@ -1090,12 +1129,15 @@ export async function POST(request) {
         `${origin}/api/standardization-action`,
         {
           method: "POST",
+
           headers,
+
           body: JSON.stringify({
             approvalId,
             action,
             rejectionReason,
           }),
+
           cache: "no-store",
         }
       );
@@ -1173,16 +1215,20 @@ export async function DELETE(request) {
         `${origin}/api/standardization-action`,
         {
           method: "POST",
+
           headers: {
             "Content-Type":
               "application/json",
+
             Authorization:
               `Bearer ${auth.accessToken}`,
           },
+
           body: JSON.stringify({
             approvalId,
             action: "DELETE",
           }),
+
           cache: "no-store",
         }
       );
