@@ -1,1723 +1,1849 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useApp } from '../../context/AppContext';
+"use client";
+
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
-  BookOpen,
-  Cpu,
-  Users,
-  ShieldCheck,
   CheckCircle2,
-  AlertTriangle,
-  Plus,
-  Save,
-  Search,
-  RefreshCw,
-  UserCheck,
-  UserX,
-  Building2,
-  Landmark,
-  Activity,
-  Loader2,
   XCircle,
-  UserCog,
-  MailCheck,
-  Ban,
-  KeyRound,
-} from 'lucide-react';
+  AlertTriangle,
+  RefreshCw,
+  Trash2,
+  FileText,
+  Package,
+  ShieldCheck,
+  Clock3,
+  Search,
+  Eye,
+  Loader2,
+  X,
+  Mail,
+  Building2,
+  Hash,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
+
+import { supabase } from "../../../lib/supabase";
+
+/* =========================================================
+   TYPES
+========================================================= */
 
 type AdminTab =
-  | 'standards'
-  | 'dictionary'
-  | 'rules'
-  | 'ai'
-  | 'rbac';
+  | "approvals"
+  | "datasheets"
+  | "products";
 
-type ManagedUser = {
-  user_id: string;
-  email: string | null;
-  full_name: string | null;
-  user_type: 'GOVERNMENT' | 'COMPANY';
-  role: string;
+type CompanyRecord = {
+  company_id: number;
+  company_name: string;
+};
+
+type ApprovalRecord = {
+  id: string;
   company_name: string | null;
-  is_active: boolean;
+  company_material_id: number | null;
+  part_name: string | null;
+  company_material_code: string | null;
+  ai_standard_code: string | null;
+  ai_confidence: number | null;
+  approval_status: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_by: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  email_status: string;
+  email_sent_at: string | null;
+  email_error: string | null;
   created_at: string;
   updated_at: string;
 };
 
-const AVAILABLE_ROLES = [
-  'Pending User',
-  'National Administrator',
-  'CPSE Administrator (IOCL)',
-  'CPSE Administrator (ONGC)',
-  'Material Master Officer',
-  'Procurement Officer',
-  'Auditor',
-  'Executive Management',
-];
+type DatasheetRecord = {
+  datasheet_id: number;
+  company_id: number | null;
+  company_name: string;
+  file_name: string | null;
+  file_path: string | null;
+  file_type: string | null;
+  extraction_status: string | null;
+  created_at: string | null;
+};
 
-const USER_TYPES = [
-  'COMPANY',
-  'GOVERNMENT',
-] as const;
+type ProductRecord = {
+  material_id: number;
+  company_id: number | null;
+  company_name: string;
+  datasheet_id: number | null;
+  company_material_code: string | null;
+  material_name: string | null;
+  description: string | null;
 
-export const AdminView: React.FC = () => {
-  const { addToast } = useApp();
+  material_family: string | null;
+  pressure_rating: string | null;
+  temperature_rating: string | null;
+  manufacturer: string | null;
+  model: string | null;
 
-  const [activeTab, setActiveTab] =
-    useState<AdminTab>('rules');
+  standards: unknown;
+  dimensions: unknown;
+  design_features: unknown;
+  other_attributes: unknown;
 
-  /* =====================================================
-     AI MODEL WEIGHTS
-  ===================================================== */
+  created_at: string | null;
+};
 
-  const [semanticWeight, setSemanticWeight] = useState(30);
-  const [materialWeight, setMaterialWeight] = useState(25);
-  const [gradeWeight, setGradeWeight] = useState(20);
-  const [dimensionWeight, setDimensionWeight] = useState(25);
+/* =========================================================
+   HELPERS
+========================================================= */
 
-  /* =====================================================
-     DICTIONARY
-  ===================================================== */
+function formatDate(
+  value: string | null
+) {
+  if (!value) {
+    return "—";
+  }
 
-  const [dictionarySearch, setDictionarySearch] =
-    useState('');
+  const date = new Date(value);
 
-  const abbreviations = [
-    {
-      abbr: 'SS',
-      expansion: 'Stainless Steel',
-      category: 'Metallurgy',
-      standard: 'IS/ISO',
-    },
-    {
-      abbr: 'CS / WCB',
-      expansion: 'ASTM A216 Cast Carbon Steel',
-      category: 'Castings',
-      standard: 'ASME B16.34',
-    },
-    {
-      abbr: 'FLGD',
-      expansion: 'Flanged End Connection',
-      category: 'Piping',
-      standard: 'ASME B16.5',
-    },
-    {
-      abbr: 'CL / #',
-      expansion: 'Pressure Class (e.g., Class 150/300/600)',
-      category: 'Pressure',
-      standard: 'ASME',
-    },
-    {
-      abbr: 'PTFE',
-      expansion: 'Polytetrafluoroethylene (Teflon)',
-      category: 'Polymers',
-      standard: 'ASTM',
-    },
-    {
-      abbr: 'OS&Y',
-      expansion: 'Outside Screw and Yoke',
-      category: 'Valves',
-      standard: 'API 600',
-    },
-    {
-      abbr: 'NBR',
-      expansion: 'Nitrile Butadiene Rubber',
-      category: 'Elastomers',
-      standard: 'ASTM D2000',
-    },
-    {
-      abbr: 'MS',
-      expansion: 'Mild Steel (IS 2062 Grade E250)',
-      category: 'Structural',
-      standard: 'IS 2062',
-    },
-  ];
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return value;
+  }
 
-  const filteredAbbr =
-    abbreviations.filter(item =>
-      item.abbr
-        .toLowerCase()
-        .includes(dictionarySearch.toLowerCase()) ||
-      item.expansion
-        .toLowerCase()
-        .includes(dictionarySearch.toLowerCase())
+  return date.toLocaleString();
+}
+
+function formatConfidence(
+  value: number | null
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    Number.isNaN(
+      Number(value)
+    )
+  ) {
+    return "—";
+  }
+
+  return `${Number(value).toFixed(2)}%`;
+}
+
+function prettyStatus(
+  value: string
+) {
+  return String(value || "")
+    .replace(
+      /_/g,
+      " "
+    )
+    .toLowerCase()
+    .replace(
+      /\b\w/g,
+      (letter) =>
+        letter.toUpperCase()
+    );
+}
+
+function statusClass(
+  status: string
+) {
+  switch (status) {
+    case "PENDING":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+
+    case "APPROVED":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+
+    case "REJECTED":
+      return "border-red-200 bg-red-50 text-red-700";
+
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-600";
+  }
+}
+
+function emailStatusClass(
+  status: string
+) {
+  switch (status) {
+    case "SENT":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+
+    case "FAILED":
+      return "border-red-200 bg-red-50 text-red-700";
+
+    case "PENDING":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-600";
+  }
+}
+
+function stringifyValue(
+  value: unknown
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return "—";
+  }
+
+  if (
+    typeof value ===
+    "string"
+  ) {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(
+      value,
+      null,
+      2
+    );
+  } catch {
+    return String(value);
+  }
+}
+
+/* =========================================================
+   MAIN
+========================================================= */
+
+export default function AdminView() {
+  const [
+    activeTab,
+    setActiveTab,
+  ] =
+    useState<AdminTab>(
+      "approvals"
     );
 
-  const handleSaveWeights = () => {
-    addToast({
-      title: 'AI Weights Updated',
-      message:
-        'Dual-encoder spec validation weights updated in runtime configuration.',
-      type: 'success',
-    });
-  };
+  const [
+    companies,
+    setCompanies,
+  ] =
+    useState<CompanyRecord[]>(
+      []
+    );
 
-  /* =====================================================
-     USER MANAGEMENT / RBAC
-  ===================================================== */
+  const [
+    approvals,
+    setApprovals,
+  ] =
+    useState<ApprovalRecord[]>(
+      []
+    );
 
-  const [users, setUsers] = useState<ManagedUser[]>([]);
-  const [usersLoading, setUsersLoading] = useState(false);
-  const [usersError, setUsersError] = useState<string | null>(null);
+  const [
+    datasheets,
+    setDatasheets,
+  ] =
+    useState<DatasheetRecord[]>(
+      []
+    );
 
-  const [userSearch, setUserSearch] = useState('');
+  const [
+    products,
+    setProducts,
+  ] =
+    useState<ProductRecord[]>(
+      []
+    );
 
-  const [userTypeFilter, setUserTypeFilter] =
-    useState<'ALL' | 'GOVERNMENT' | 'COMPANY'>('ALL');
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
 
-  const [statusFilter, setStatusFilter] =
-    useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
-
-  const [editingUserId, setEditingUserId] =
-    useState<string | null>(null);
-
-  const [editingUserType, setEditingUserType] =
-    useState<'GOVERNMENT' | 'COMPANY'>('COMPANY');
-
-  const [editingRole, setEditingRole] =
-    useState('Pending User');
-
-  const [editingCompany, setEditingCompany] =
-    useState('');
-
-  const [editingActive, setEditingActive] =
+  const [
+    refreshing,
+    setRefreshing,
+  ] =
     useState(false);
 
-  const [savingUserId, setSavingUserId] =
-    useState<string | null>(null);
+  const [
+    errorMessage,
+    setErrorMessage,
+  ] =
+    useState("");
 
-  const [refreshingUsers, setRefreshingUsers] =
+  const [
+    searchText,
+    setSearchText,
+  ] =
+    useState("");
+
+  const [
+    showRejected,
+    setShowRejected,
+  ] =
     useState(false);
 
-  /* =====================================================
-     LOAD USERS
-  ===================================================== */
+  const [
+    processingId,
+    setProcessingId,
+  ] =
+    useState<string | null>(
+      null
+    );
 
-  const loadUsers = async () => {
-    setUsersLoading(true);
-    setRefreshingUsers(true);
-    setUsersError(null);
+  const [
+    expandedApprovalId,
+    setExpandedApprovalId,
+  ] =
+    useState<string | null>(
+      null
+    );
 
-    try {
-      const response = await fetch(
-        '/api/admin/user',
-        {
-          method: 'GET',
-          cache: 'no-store',
+  const [
+    selectedProduct,
+    setSelectedProduct,
+  ] =
+    useState<
+      ProductRecord | null
+    >(null);
+
+  const [
+    selectedDatasheet,
+    setSelectedDatasheet,
+  ] =
+    useState<
+      DatasheetRecord | null
+    >(null);
+
+  /* =========================================================
+     LOAD ADMIN DATA
+  ========================================================= */
+
+  const loadAdminData =
+    useCallback(
+      async (
+        showRefresh = false
+      ) => {
+        try {
+          if (
+            showRefresh
+          ) {
+            setRefreshing(
+              true
+            );
+          }
+
+          setErrorMessage("");
+          setLoading(true);
+
+          /* ---------------------------------------------
+             1. LOAD COMPANIES
+          --------------------------------------------- */
+
+          const {
+            data:
+              companyRows,
+            error:
+              companyError,
+          } =
+            await supabase
+              .from(
+                "companies"
+              )
+              .select(
+                "company_id, company_name"
+              )
+              .order(
+                "company_name",
+                {
+                  ascending: true,
+                }
+              );
+
+          if (
+            companyError
+          ) {
+            throw new Error(
+              `Failed to load companies: ${companyError.message}`
+            );
+          }
+
+          const companyList =
+            (
+              companyRows ||
+              []
+            ).map(
+              (
+                row: any
+              ) => ({
+                company_id:
+                  Number(
+                    row.company_id
+                  ),
+                company_name:
+                  String(
+                    row.company_name ||
+                      "Unknown Company"
+                  ),
+              })
+            );
+
+          setCompanies(
+            companyList
+          );
+
+          const companyMap =
+            new Map<
+              number,
+              string
+            >();
+
+          companyList.forEach(
+            (
+              company
+            ) => {
+              companyMap.set(
+                company.company_id,
+                company.company_name
+              );
+            }
+          );
+
+          /* ---------------------------------------------
+             2. LOAD AI APPROVALS
+             
+             company_name is already stored directly
+             in ai_code_approvals.
+          --------------------------------------------- */
+
+          const {
+            data:
+              approvalRows,
+            error:
+              approvalError,
+          } =
+            await supabase
+              .from(
+                "ai_code_approvals"
+              )
+              .select(
+                `
+                id,
+                company_name,
+                company_material_id,
+                part_name,
+                company_material_code,
+                ai_standard_code,
+                ai_confidence,
+                approval_status,
+                approved_by,
+                approved_at,
+                rejected_by,
+                rejected_at,
+                rejection_reason,
+                email_status,
+                email_sent_at,
+                email_error,
+                created_at,
+                updated_at
+                `
+              )
+              .order(
+                "created_at",
+                {
+                  ascending: false,
+                }
+              );
+
+          if (
+            approvalError
+          ) {
+            throw new Error(
+              `Failed to load AI approvals: ${approvalError.message}`
+            );
+          }
+
+          setApprovals(
+            (
+              approvalRows ||
+              []
+            ) as ApprovalRecord[]
+          );
+
+          /* ---------------------------------------------
+             3. LOAD DATASHEETS
+             
+             We DO NOT use:
+             companies(...)
+             
+             We manually map company_id.
+          --------------------------------------------- */
+
+          const {
+            data:
+              datasheetRows,
+            error:
+              datasheetError,
+          } =
+            await supabase
+              .from(
+                "datasheets"
+              )
+              .select(
+                `
+                datasheet_id,
+                company_id,
+                file_name,
+                file_path,
+                file_type,
+                extraction_status,
+                created_at
+                `
+              )
+              .order(
+                "created_at",
+                {
+                  ascending: false,
+                }
+              );
+
+          if (
+            datasheetError
+          ) {
+            throw new Error(
+              `Failed to load datasheets: ${datasheetError.message}`
+            );
+          }
+
+          const normalizedDatasheets =
+            (
+              datasheetRows ||
+              []
+            ).map(
+              (
+                row: any
+              ) => {
+                const companyId =
+                  row.company_id !==
+                    null &&
+                  row.company_id !==
+                    undefined
+                    ? Number(
+                        row.company_id
+                      )
+                    : null;
+
+                return {
+                  datasheet_id:
+                    Number(
+                      row.datasheet_id
+                    ),
+
+                  company_id:
+                    companyId,
+
+                  company_name:
+                    companyId !==
+                      null &&
+                    companyMap.has(
+                      companyId
+                    )
+                      ? companyMap.get(
+                          companyId
+                        )!
+                      : `Company ID ${companyId ?? "—"}`,
+
+                  file_name:
+                    row.file_name ||
+                    null,
+
+                  file_path:
+                    row.file_path ||
+                    null,
+
+                  file_type:
+                    row.file_type ||
+                    null,
+
+                  extraction_status:
+                    row.extraction_status ||
+                    null,
+
+                  created_at:
+                    row.created_at ||
+                    null,
+                };
+              }
+            );
+
+          setDatasheets(
+            normalizedDatasheets
+          );
+
+          /* ---------------------------------------------
+             4. LOAD COMPANY MATERIALS
+          --------------------------------------------- */
+
+          const {
+            data:
+              materialRows,
+            error:
+              materialError,
+          } =
+            await supabase
+              .from(
+                "company_materials"
+              )
+              .select(
+                `
+                material_id,
+                company_id,
+                datasheet_id,
+                company_material_code,
+                material_name,
+                description,
+                created_at
+                `
+              )
+              .order(
+                "created_at",
+                {
+                  ascending: false,
+                }
+              )
+              .limit(
+                5000
+              );
+
+          if (
+            materialError
+          ) {
+            throw new Error(
+              `Failed to load company materials: ${materialError.message}`
+            );
+          }
+
+          /* ---------------------------------------------
+             5. LOAD MATERIAL ATTRIBUTES
+          --------------------------------------------- */
+
+          const materialIds =
+            (
+              materialRows ||
+              []
+            )
+              .map(
+                (
+                  row: any
+                ) =>
+                  Number(
+                    row.material_id
+                  )
+              )
+              .filter(
+                (
+                  id: number
+                ) =>
+                  Number.isInteger(
+                    id
+                  ) &&
+                  id > 0
+              );
+
+          let attributeRows:
+            any[] =
+            [];
+
+          if (
+            materialIds.length >
+            0
+          ) {
+            const {
+              data,
+              error,
+            } =
+              await supabase
+                .from(
+                  "material_attributes"
+                )
+                .select(
+                  `
+                  material_id,
+                  material_family,
+                  pressure_rating,
+                  temperature_rating,
+                  manufacturer,
+                  model,
+                  standards,
+                  dimensions,
+                  design_features,
+                  other_attributes
+                  `
+                )
+                .in(
+                  "material_id",
+                  materialIds
+                );
+
+            if (
+              error
+            ) {
+              console.error(
+                "Material attributes error:",
+                error
+              );
+
+              /*
+               * Keep the products visible even when
+               * technical attributes are unavailable.
+               */
+            } else {
+              attributeRows =
+                data ||
+                [];
+            }
+          }
+
+          const attributeMap =
+            new Map<
+              number,
+              any
+            >();
+
+          attributeRows.forEach(
+            (
+              row: any
+            ) => {
+              attributeMap.set(
+                Number(
+                  row.material_id
+                ),
+                row
+              );
+            }
+          );
+
+          /* ---------------------------------------------
+             6. BUILD PRODUCT RECORDS
+          --------------------------------------------- */
+
+          const normalizedProducts =
+            (
+              materialRows ||
+              []
+            ).map(
+              (
+                row: any
+              ) => {
+                const materialId =
+                  Number(
+                    row.material_id
+                  );
+
+                const companyId =
+                  row.company_id !==
+                    null &&
+                  row.company_id !==
+                    undefined
+                    ? Number(
+                        row.company_id
+                      )
+                    : null;
+
+                const attributes =
+                  attributeMap.get(
+                    materialId
+                  ) || {};
+
+                return {
+                  material_id:
+                    materialId,
+
+                  company_id:
+                    companyId,
+
+                  company_name:
+                    companyId !==
+                      null &&
+                    companyMap.has(
+                      companyId
+                    )
+                      ? companyMap.get(
+                          companyId
+                        )!
+                      : `Company ID ${companyId ?? "—"}`,
+
+                  datasheet_id:
+                    row.datasheet_id !==
+                      null &&
+                    row.datasheet_id !==
+                      undefined
+                      ? Number(
+                          row.datasheet_id
+                        )
+                      : null,
+
+                  company_material_code:
+                    row.company_material_code ||
+                    null,
+
+                  material_name:
+                    row.material_name ||
+                    null,
+
+                  description:
+                    row.description ||
+                    null,
+
+                  material_family:
+                    attributes.material_family ||
+                    null,
+
+                  pressure_rating:
+                    attributes.pressure_rating ||
+                    null,
+
+                  temperature_rating:
+                    attributes.temperature_rating ||
+                    null,
+
+                  manufacturer:
+                    attributes.manufacturer ||
+                    null,
+
+                  model:
+                    attributes.model ||
+                    null,
+
+                  standards:
+                    attributes.standards ||
+                    null,
+
+                  dimensions:
+                    attributes.dimensions ||
+                    null,
+
+                  design_features:
+                    attributes.design_features ||
+                    null,
+
+                  other_attributes:
+                    attributes.other_attributes ||
+                    null,
+
+                  created_at:
+                    row.created_at ||
+                    null,
+                };
+              }
+            );
+
+          setProducts(
+            normalizedProducts
+          );
+        } catch (
+          error
+        ) {
+          console.error(
+            "Admin loading error:",
+            error
+          );
+
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "Failed to load administration data."
+          );
+        } finally {
+          setLoading(false);
+
+          if (
+            showRefresh
+          ) {
+            setRefreshing(
+              false
+            );
+          }
         }
-      );
+      },
+      []
+    );
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result?.error ||
-            'Unable to load user profiles.'
-        );
-      }
-
-      setUsers(
-        Array.isArray(result?.users)
-          ? result.users
-          : []
-      );
-    } catch (error: any) {
-      console.error(
-        'Admin user load error:',
-        error
-      );
-
-      setUsersError(
-        error?.message ||
-          'Unable to load user profiles.'
-      );
-
-      setUsers([]);
-    } finally {
-      setUsersLoading(false);
-
-      window.setTimeout(() => {
-        setRefreshingUsers(false);
-      }, 300);
-    }
-  };
+  /* =========================================================
+     INITIAL LOAD
+  ========================================================= */
 
   useEffect(() => {
-    if (activeTab === 'rbac') {
-      loadUsers();
-    }
-  }, [activeTab]);
+    void loadAdminData();
+  }, [
+    loadAdminData,
+  ]);
 
-  /* =====================================================
-     USER EDITING
-  ===================================================== */
+  /* =========================================================
+     FILTER APPROVALS
+  ========================================================= */
 
-  const startEditingUser = (
-    user: ManagedUser
-  ) => {
-    setEditingUserId(user.user_id);
+  const filteredApprovals =
+    useMemo(() => {
+      const query =
+        searchText
+          .trim()
+          .toLowerCase();
 
-    setEditingUserType(
-      user.user_type
-    );
+      return approvals.filter(
+        (
+          approval
+        ) => {
+          if (
+            !showRejected &&
+            approval.approval_status ===
+              "REJECTED"
+          ) {
+            return false;
+          }
 
-    setEditingRole(
-      user.role || 'Pending User'
-    );
+          if (!query) {
+            return true;
+          }
 
-    setEditingCompany(
-      user.company_name || ''
-    );
+          return [
+            approval.company_name,
+            approval.part_name,
+            approval.company_material_code,
+            approval.ai_standard_code,
+            approval.approval_status,
+          ]
+            .filter(
+              Boolean
+            )
+            .some(
+              (
+                value
+              ) =>
+                String(
+                  value
+                )
+                  .toLowerCase()
+                  .includes(
+                    query
+                  )
+            );
+        }
+      );
+    }, [
+      approvals,
+      searchText,
+      showRejected,
+    ]);
 
-    setEditingActive(
-      user.is_active
-    );
-  };
+  /* =========================================================
+     FILTER DATASHEETS
+  ========================================================= */
 
-  const cancelEditingUser = () => {
-    setEditingUserId(null);
-    setEditingUserType('COMPANY');
-    setEditingRole('Pending User');
-    setEditingCompany('');
-    setEditingActive(false);
-  };
+  const filteredDatasheets =
+    useMemo(() => {
+      const query =
+        searchText
+          .trim()
+          .toLowerCase();
 
-  /* =====================================================
-     SAVE USER
-  ===================================================== */
+      if (!query) {
+        return datasheets;
+      }
 
-  const saveUser = async (
-    userId: string
-  ) => {
-    setSavingUserId(userId);
+      return datasheets.filter(
+        (
+          datasheet
+        ) =>
+          [
+            datasheet.company_name,
+            datasheet.file_name,
+            datasheet.file_type,
+            datasheet.extraction_status,
+          ]
+            .filter(
+              Boolean
+            )
+            .some(
+              (
+                value
+              ) =>
+                String(
+                  value
+                )
+                  .toLowerCase()
+                  .includes(
+                    query
+                  )
+            )
+      );
+    }, [
+      datasheets,
+      searchText,
+    ]);
 
-    try {
-      const currentUser =
-        users.find(
-          user =>
-            user.user_id === userId
+  /* =========================================================
+     FILTER PRODUCTS
+  ========================================================= */
+
+  const filteredProducts =
+    useMemo(() => {
+      const query =
+        searchText
+          .trim()
+          .toLowerCase();
+
+      if (!query) {
+        return products;
+      }
+
+      return products.filter(
+        (
+          product
+        ) =>
+          [
+            product.company_name,
+            product.material_name,
+            product.company_material_code,
+            product.description,
+            product.material_family,
+            product.manufacturer,
+            product.model,
+          ]
+            .filter(
+              Boolean
+            )
+            .some(
+              (
+                value
+              ) =>
+                String(
+                  value
+                )
+                  .toLowerCase()
+                  .includes(
+                    query
+                  )
+            )
+      );
+    }, [
+      products,
+      searchText,
+    ]);
+
+  /* =========================================================
+     COUNTS
+  ========================================================= */
+
+  const pendingCount =
+    approvals.filter(
+      (
+        approval
+      ) =>
+        approval.approval_status ===
+        "PENDING"
+    ).length;
+
+  const approvedCount =
+    approvals.filter(
+      (
+        approval
+      ) =>
+        approval.approval_status ===
+        "APPROVED"
+    ).length;
+
+  /* =========================================================
+     APPROVE
+  ========================================================= */
+
+  const handleApprove =
+    async (
+      approval: ApprovalRecord
+    ) => {
+      if (
+        approval.approval_status !==
+        "PENDING"
+      ) {
+        return;
+      }
+
+      setProcessingId(
+        approval.id
+      );
+
+      setErrorMessage("");
+
+      try {
+        const {
+          data:
+            userData,
+        } =
+          await supabase.auth.getUser();
+
+        const userId =
+          userData.user?.id;
+
+        if (!userId) {
+          throw new Error(
+            "Administrator session not found."
+          );
+        }
+
+        const {
+          error,
+        } =
+          await supabase
+            .from(
+              "ai_code_approvals"
+            )
+            .update({
+              approval_status:
+                "APPROVED",
+
+              approved_by:
+                userId,
+
+              approved_at:
+                new Date().toISOString(),
+
+              updated_at:
+                new Date().toISOString(),
+            })
+            .eq(
+              "id",
+              approval.id
+            )
+            .eq(
+              "approval_status",
+              "PENDING"
+            );
+
+        if (error) {
+          throw error;
+        }
+
+        /*
+         * Email endpoint.
+         * It can be added/finished separately.
+         */
+
+        try {
+          await fetch(
+            "/api/admin/code-approval-email",
+            {
+              method:
+                "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body:
+                JSON.stringify({
+                  approvalId:
+                    approval.id,
+                }),
+            }
+          );
+        } catch (
+          emailError
+        ) {
+          console.error(
+            "Email notification error:",
+            emailError
+          );
+        }
+
+        await loadAdminData();
+      } catch (
+        error
+      ) {
+        console.error(
+          "Approval error:",
+          error
+        );
+
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Failed to approve AI code."
+        );
+      } finally {
+        setProcessingId(
+          null
+        );
+      }
+    };
+
+  /* =========================================================
+     REJECT
+  ========================================================= */
+
+  const handleReject =
+    async (
+      approval: ApprovalRecord
+    ) => {
+      if (
+        approval.approval_status !==
+        "PENDING"
+      ) {
+        return;
+      }
+
+      const reason =
+        window.prompt(
+          "Enter the reason for rejecting this AI code assignment:"
         );
 
       if (
-        editingUserType ===
-        'GOVERNMENT'
+        reason ===
+        null
       ) {
-        const email = (
-          currentUser?.email || ''
-        )
-          .trim()
-          .toLowerCase();
+        return;
+      }
 
-        if (
-          !/^[^@\s]+@gov\.in$/i.test(
-            email
-          )
-        ) {
+      if (
+        !reason.trim()
+      ) {
+        window.alert(
+          "A rejection reason is required."
+        );
+
+        return;
+      }
+
+      setProcessingId(
+        approval.id
+      );
+
+      setErrorMessage("");
+
+      try {
+        const {
+          data:
+            userData,
+        } =
+          await supabase.auth.getUser();
+
+        const userId =
+          userData.user?.id;
+
+        if (!userId) {
           throw new Error(
-            'Government users must have an official @gov.in email address.'
+            "Administrator session not found."
           );
         }
-      }
 
-      const response =
-        await fetch(
-          '/api/admin/user',
-          {
-            method: 'PATCH',
-            headers: {
-              'Content-Type':
-                'application/json',
-            },
-            body: JSON.stringify({
-              userId,
-              userType:
-                editingUserType,
-              role: editingRole,
-              companyName:
-                editingCompany.trim() ||
-                null,
-              isActive:
-                editingActive,
-            }),
-          }
-        );
-
-      const result =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result?.error ||
-            'Unable to update user.'
-        );
-      }
-
-      setUsers(
-        currentUsers =>
-          currentUsers.map(user =>
-            user.user_id ===
-            userId
-              ? result.user
-              : user
-          )
-      );
-
-      cancelEditingUser();
-
-      addToast({
-        title:
-          'User Profile Updated',
-        message:
-          'Account type, role, company and activation status were updated successfully.',
-        type: 'success',
-      });
-    } catch (error: any) {
-      console.error(
-        'Admin user update error:',
-        error
-      );
-
-      addToast({
-        title:
-          'Update Failed',
-        message:
-          error?.message ||
-          'Unable to update user.',
-        type: 'error',
-      });
-    } finally {
-      setSavingUserId(null);
-    }
-  };
-
-  /* =====================================================
-     DERIVED USER DATA
-  ===================================================== */
-
-  const filteredUsers =
-    users.filter(user => {
-      const search =
-        userSearch
-          .trim()
-          .toLowerCase();
-
-      const matchesSearch =
-        !search ||
-        (
-          user.email || ''
-        )
-          .toLowerCase()
-          .includes(search) ||
-        (
-          user.full_name || ''
-        )
-          .toLowerCase()
-          .includes(search) ||
-        (
-          user.company_name || ''
-        )
-          .toLowerCase()
-          .includes(search) ||
-        (
-          user.role || ''
-        )
-          .toLowerCase()
-          .includes(search);
-
-      const matchesType =
-        userTypeFilter ===
-          'ALL' ||
-        user.user_type ===
-          userTypeFilter;
-
-      const matchesStatus =
-        statusFilter ===
-          'ALL' ||
-        (
-          statusFilter ===
-          'ACTIVE'
-            ? user.is_active
-            : !user.is_active
-        );
-
-      return (
-        matchesSearch &&
-        matchesType &&
-        matchesStatus
-      );
-    });
-
-  const governmentUsersList =
-    useMemo(
-      () =>
-        users.filter(
-          user =>
-            user.user_type ===
-            'GOVERNMENT'
-        ),
-      [users]
-    );
-
-  const pendingGovernmentUsers =
-    useMemo(
-      () =>
-        governmentUsersList.filter(
-          user =>
-            !user.is_active ||
-            user.role ===
-              'Pending User'
-        ),
-      [
-        governmentUsersList,
-      ]
-    );
-
-  const activeGovernmentUsers =
-    useMemo(
-      () =>
-        governmentUsersList.filter(
-          user =>
-            user.is_active &&
-            user.role !==
-              'Pending User'
-        ),
-      [
-        governmentUsersList,
-      ]
-    );
-
-  const governmentAdministrators =
-    useMemo(
-      () =>
-        governmentUsersList.filter(
-          user =>
-            user.role ===
-            'National Administrator' ||
-            user.role.startsWith(
-              'CPSE Administrator'
+        const {
+          error,
+        } =
+          await supabase
+            .from(
+              "ai_code_approvals"
             )
-        ),
-      [
-        governmentUsersList,
-      ]
-    );
+            .update({
+              approval_status:
+                "REJECTED",
 
-  const totalUsers =
-    users.length;
+              rejected_by:
+                userId,
 
-  const activeUsers =
-    users.filter(
-      user =>
-        user.is_active
-    ).length;
+              rejected_at:
+                new Date().toISOString(),
 
-  const pendingUsers =
-    users.filter(
-      user =>
-        !user.is_active ||
-        user.role ===
-          'Pending User'
-    ).length;
+              rejection_reason:
+                reason.trim(),
 
-  const governmentUsers =
-    governmentUsersList.length;
+              updated_at:
+                new Date().toISOString(),
+            })
+            .eq(
+              "id",
+              approval.id
+            )
+            .eq(
+              "approval_status",
+              "PENDING"
+            );
 
-  const companyUsers =
-    users.filter(
-      user =>
-        user.user_type ===
-        'COMPANY'
-    ).length;
+        if (error) {
+          throw error;
+        }
 
-  /* =====================================================
-     QUICK GOVERNMENT ACTION
-  ===================================================== */
+        await loadAdminData();
+      } catch (
+        error
+      ) {
+        console.error(
+          "Reject error:",
+          error
+        );
 
-  const quickGovernmentEdit = (
-    user: ManagedUser
-  ) => {
-    startEditingUser(user);
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Failed to reject AI code."
+        );
+      } finally {
+        setProcessingId(
+          null
+        );
+      }
+    };
 
-    window.scrollTo({
-      top: document.body.scrollHeight,
-      behavior: 'smooth',
-    });
-  };
+  /* =========================================================
+     DELETE DATASHEET
+  ========================================================= */
+
+  const handleDeleteDatasheet =
+    async (
+      datasheet: DatasheetRecord
+    ) => {
+      const confirmed =
+        window.confirm(
+          `Remove this datasheet?\n\nCompany: ${datasheet.company_name}\nFile: ${datasheet.file_name || "Unnamed file"}`
+        );
+
+      if (!confirmed) {
+        return;
+      }
+
+      const id =
+        `datasheet-${datasheet.datasheet_id}`;
+
+      setProcessingId(id);
+
+      setErrorMessage("");
+
+      try {
+        const response =
+          await fetch(
+            "/api/admin/datasheet",
+            {
+              method:
+                "DELETE",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body:
+                JSON.stringify({
+                  datasheetId:
+                    datasheet.datasheet_id,
+                }),
+            }
+          );
+
+        const result =
+          await response
+            .json()
+            .catch(
+              () => ({})
+            );
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            result.error ||
+              "Failed to remove datasheet."
+          );
+        }
+
+        await loadAdminData();
+      } catch (
+        error
+      ) {
+        console.error(
+          "Datasheet deletion error:",
+          error
+        );
+
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Failed to remove datasheet."
+        );
+      } finally {
+        setProcessingId(
+          null
+        );
+      }
+    };
+
+  /* =========================================================
+     RENDER
+  ========================================================= */
 
   return (
-    <div className="p-4 lg:p-6 space-y-6 max-w-[1600px] mx-auto">
+    <div className="min-h-screen bg-[#f8fafc] px-4 py-6 sm:px-6 lg:px-8">
 
-      {/* =====================================================
-          HEADER
-      ===================================================== */}
+      <div className="mx-auto max-w-[1600px] space-y-6">
 
-      <div className="bg-[#000a1e] border border-slate-800 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        {/* ===================================================
+            HEADER
+        =================================================== */}
 
-        <div>
+        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-[#002244] via-[#003d73] to-[#0f172a] text-white shadow-sm">
 
-          <div className="flex items-center gap-2">
+          <div className="px-6 py-7 lg:px-8">
 
-            <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider font-mono">
-              System Administration
-            </span>
+            <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
 
-            <span className="text-xs text-slate-400 font-mono">
-              Government Governance & Access Control
-            </span>
+              <div>
+
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-300/30 bg-emerald-300/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-300">
+
+                  <ShieldCheck className="h-3.5 w-3.5" />
+
+                  Government Administration
+
+                </div>
+
+                <h1 className="text-3xl font-black tracking-tight sm:text-4xl">
+                  Material Governance
+                </h1>
+
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+                  Review AI-assigned BMG material codes,
+                  inspect datasheets and manage material records.
+                </p>
+
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadAdminData(
+                    true
+                  )
+                }
+                disabled={
+                  refreshing
+                }
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-xs font-bold text-white transition hover:bg-white/15 disabled:opacity-50"
+              >
+
+                <RefreshCw
+                  className={
+                    refreshing
+                      ? "h-4 w-4 animate-spin"
+                      : "h-4 w-4"
+                  }
+                />
+
+                Refresh Data
+
+              </button>
+
+            </div>
 
           </div>
 
-          <h1 className="text-xl font-bold text-white tracking-tight mt-1">
-            Platform Engine & Government Administration
-          </h1>
+          {/* =================================================
+              STATS
+          ================================================= */}
 
-          <p className="text-xs text-slate-300">
-            Manage government officers, CPSE access,
-            platform roles, engineering governance and
-            secure account activation.
-          </p>
+          <div className="grid grid-cols-2 border-t border-white/10 sm:grid-cols-4">
 
-        </div>
+            <div className="border-r border-white/10 px-5 py-4">
 
-        <div className="flex items-center gap-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Pending AI Codes
+              </div>
 
-          <div className="px-3 py-2 rounded-xl bg-indigo-500/10 border border-indigo-400/20">
+              <div className="mt-1 flex items-center gap-2 text-2xl font-black text-amber-300">
 
-            <div className="text-[9px] uppercase tracking-wider text-indigo-300 font-black">
-              Government Users
+                <Clock3 className="h-5 w-5" />
+
+                {pendingCount}
+
+              </div>
+
             </div>
 
-            <div className="text-lg font-black text-white font-mono">
-              {governmentUsers}
+            <div className="border-b border-white/10 px-5 py-4 sm:border-b-0 sm:border-r">
+
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Approved
+              </div>
+
+              <div className="mt-1 flex items-center gap-2 text-2xl font-black text-emerald-300">
+
+                <CheckCircle2 className="h-5 w-5" />
+
+                {approvedCount}
+
+              </div>
+
+            </div>
+
+            <div className="border-r border-white/10 px-5 py-4">
+
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Datasheets
+              </div>
+
+              <div className="mt-1 flex items-center gap-2 text-2xl font-black text-white">
+
+                <FileText className="h-5 w-5" />
+
+                {datasheets.length}
+
+              </div>
+
+            </div>
+
+            <div className="px-5 py-4">
+
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Products
+              </div>
+
+              <div className="mt-1 flex items-center gap-2 text-2xl font-black text-white">
+
+                <Package className="h-5 w-5" />
+
+                {products.length}
+
+              </div>
+
             </div>
 
           </div>
 
-          <div className="px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-400/20">
+        </section>
 
-            <div className="text-[9px] uppercase tracking-wider text-emerald-300 font-black">
-              Active
-            </div>
+        {/* ===================================================
+            ERROR
+        =================================================== */}
 
-            <div className="text-lg font-black text-white font-mono">
-              {activeGovernmentUsers.length}
-            </div>
+        {errorMessage && (
+          <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
 
-          </div>
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
 
-        </div>
+            <div className="min-w-0">
 
-      </div>
+              <div className="font-bold">
+                Administration data error
+              </div>
 
-      {/* =====================================================
-          TABS
-      ===================================================== */}
-
-      <div className="bg-white rounded-2xl border border-slate-200 p-2 shadow-xs flex items-center gap-1 overflow-x-auto text-xs">
-
-        <button
-          onClick={() =>
-            setActiveTab('rules')
-          }
-          className={`px-4 py-2 rounded-xl font-bold transition-colors flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-            activeTab ===
-            'rules'
-              ? 'bg-slate-900 text-white'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4 text-amber-400" />
-          Spec Guard Rules
-        </button>
-
-        <button
-          onClick={() =>
-            setActiveTab('dictionary')
-          }
-          className={`px-4 py-2 rounded-xl font-bold transition-colors flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-            activeTab ===
-            'dictionary'
-              ? 'bg-slate-900 text-white'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <BookOpen className="w-4 h-4 text-cyan-400" />
-          Domain Dictionary
-        </button>
-
-        <button
-          onClick={() =>
-            setActiveTab('ai')
-          }
-          className={`px-4 py-2 rounded-xl font-bold transition-colors flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-            activeTab ===
-            'ai'
-              ? 'bg-slate-900 text-white'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Cpu className="w-4 h-4 text-emerald-400" />
-          AI Embedding & Weights
-        </button>
-
-        <button
-          onClick={() =>
-            setActiveTab('rbac')
-          }
-          className={`px-4 py-2 rounded-xl font-bold transition-colors flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-            activeTab ===
-            'rbac'
-              ? 'bg-slate-900 text-white'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Users className="w-4 h-4 text-indigo-400" />
-          Government & RBAC
-        </button>
-
-      </div>
-
-      {/* =====================================================
-          SPEC GUARD RULES
-      ===================================================== */}
-
-      {activeTab === 'rules' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-
-          <div className="flex items-center justify-between">
-
-            <div>
-
-              <h2 className="text-base font-bold text-slate-900">
-                Engineering Safety Guard Rules
-              </h2>
-
-              <p className="text-xs text-slate-500">
-                Enforces physical zero-tolerance rules that
-                override high semantic similarity.
-              </p>
+              <div className="mt-1">
+                {errorMessage}
+              </div>
 
             </div>
 
             <button
               type="button"
-              className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer"
               onClick={() =>
-                addToast({
-                  title:
-                    'Safety Rule Editor',
-                  message:
-                    'Rule creation workflow will be connected to the governance rules store.',
-                  type: 'info',
-                })
+                setErrorMessage("")
               }
+              className="ml-auto rounded-lg p-1 hover:bg-red-100"
             >
-              <Plus className="w-3.5 h-3.5" />
-              Add Safety Rule
+              <X className="h-4 w-4" />
+            </button>
+
+          </div>
+        )}
+
+        {/* ===================================================
+            TABS
+        =================================================== */}
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+
+          <div className="grid gap-2 md:grid-cols-3">
+
+            <button
+              type="button"
+              onClick={() =>
+                setActiveTab(
+                  "approvals"
+                )
+              }
+              className={`rounded-xl px-4 py-4 text-left transition ${
+                activeTab ===
+                "approvals"
+                  ? "bg-[#002244] text-white"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+
+              <div className="flex items-center gap-3">
+
+                <div className="rounded-lg bg-amber-50 p-2">
+
+                  <ShieldCheck className="h-5 w-5 text-amber-600" />
+
+                </div>
+
+                <div>
+
+                  <div className="text-sm font-black">
+                    AI Code Approval
+                  </div>
+
+                  <div className="text-[10px] opacity-70">
+                    {pendingCount} pending
+                  </div>
+
+                </div>
+
+              </div>
+
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setActiveTab(
+                  "datasheets"
+                )
+              }
+              className={`rounded-xl px-4 py-4 text-left transition ${
+                activeTab ===
+                "datasheets"
+                  ? "bg-[#002244] text-white"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+
+              <div className="flex items-center gap-3">
+
+                <div className="rounded-lg bg-blue-50 p-2">
+
+                  <FileText className="h-5 w-5 text-blue-600" />
+
+                </div>
+
+                <div>
+
+                  <div className="text-sm font-black">
+                    All Datasheets
+                  </div>
+
+                  <div className="text-[10px] opacity-70">
+                    {datasheets.length} records
+                  </div>
+
+                </div>
+
+              </div>
+
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setActiveTab(
+                  "products"
+                )
+              }
+              className={`rounded-xl px-4 py-4 text-left transition ${
+                activeTab ===
+                "products"
+                  ? "bg-[#002244] text-white"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+
+              <div className="flex items-center gap-3">
+
+                <div className="rounded-lg bg-emerald-50 p-2">
+
+                  <Package className="h-5 w-5 text-emerald-600" />
+
+                </div>
+
+                <div>
+
+                  <div className="text-sm font-black">
+                    Product / Material Details
+                  </div>
+
+                  <div className="text-[10px] opacity-70">
+                    {products.length} records
+                  </div>
+
+                </div>
+
+              </div>
+
             </button>
 
           </div>
 
-          <div className="space-y-3 text-xs">
-
-            <div className="p-4 bg-rose-50/70 rounded-xl border border-rose-200 space-y-1.5">
-
-              <div className="flex items-center justify-between font-bold text-rose-800">
-
-                <span className="flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-rose-600" />
-                  Rule #SG-101: Zero Tolerance on Fastener & Bolt Lengths
-                </span>
-
-                <span className="font-mono text-[10px] bg-rose-200 px-2 py-0.5 rounded text-rose-900">
-                  Active • Blocking
-                </span>
-
-              </div>
-
-              <p className="text-slate-700 leading-relaxed">
-                If candidate items differ in nominal length by
-                &gt; 0mm, automated merge is strictly forbidden
-                regardless of semantic text score.
-              </p>
-
-            </div>
-
-            <div className="p-4 bg-amber-50/70 rounded-xl border border-amber-200 space-y-1.5">
-
-              <div className="flex items-center justify-between font-bold text-amber-800">
-
-                <span className="flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-amber-600" />
-                  Rule #SG-104: Valve Pressure Class Incompatibility
-                </span>
-
-                <span className="font-mono text-[10px] bg-amber-200 px-2 py-0.5 rounded text-amber-900">
-                  Active • Blocking
-                </span>
-
-              </div>
-
-              <p className="text-slate-700 leading-relaxed">
-                Class 150 and Class 300 ratings cannot be
-                merged into a single common item.
-              </p>
-
-            </div>
-
-            <div className="p-4 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-1.5">
-
-              <div className="flex items-center justify-between font-bold text-emerald-800">
-
-                <span className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  Rule #SG-108: Equivalent Metallurgy Dual-Naming
-                </span>
-
-                <span className="font-mono text-[10px] bg-emerald-200 px-2 py-0.5 rounded text-emerald-900">
-                  Active • Auto-Map
-                </span>
-
-              </div>
-
-              <p className="text-slate-700 leading-relaxed">
-                Allow equivalence between AISI 304 and
-                IS 04Cr18Ni10 when certified in Mill Test
-                Certificates.
-              </p>
-
-            </div>
-
-          </div>
-
         </div>
-      )}
 
-      {/* =====================================================
-          DOMAIN DICTIONARY
-      ===================================================== */}
+        {/* ===================================================
+            SEARCH
+        =================================================== */}
 
-      {activeTab === 'dictionary' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center">
 
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="relative flex-1">
 
-            <div>
-
-              <h2 className="text-base font-bold text-slate-900">
-                Bharat Domain Dictionary
-              </h2>
-
-              <p className="text-xs text-slate-500">
-                Standardizing Indian industrial CPSE abbreviations
-                into formal specifications.
-              </p>
-
-            </div>
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
             <input
-              type="text"
-              value={dictionarySearch}
-              onChange={e =>
-                setDictionarySearch(
-                  e.target.value
+              value={
+                searchText
+              }
+              onChange={(
+                event
+              ) =>
+                setSearchText(
+                  event.target.value
                 )
               }
-              placeholder="Search abbreviation or standard..."
-              className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-hidden focus:border-amber-500 w-full sm:w-64"
+              placeholder={
+                activeTab ===
+                "approvals"
+                  ? "Search company, part, company code or AI code..."
+                  : activeTab ===
+                      "datasheets"
+                    ? "Search company or datasheet..."
+                    : "Search company, material or description..."
+              }
+              className="w-full rounded-xl border border-slate-200 bg-white py-3.5 pl-11 pr-4 text-sm text-slate-900 outline-none shadow-sm focus:border-[#003d73] focus:ring-2 focus:ring-[#003d73]/10"
             />
 
           </div>
 
-          <div className="overflow-hidden border border-slate-200 rounded-xl">
+          {activeTab ===
+            "approvals" && (
+            <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-600 shadow-sm">
 
-            <table className="w-full text-left text-xs">
-
-              <thead className="bg-slate-50 text-[10px] font-mono text-slate-500 uppercase border-b border-slate-200">
-
-                <tr>
-                  <th className="p-3">
-                    Raw CPSE Abbreviation
-                  </th>
-
-                  <th className="p-3">
-                    Canonical Expansion
-                  </th>
-
-                  <th className="p-3">
-                    Category
-                  </th>
-
-                  <th className="p-3 text-right">
-                    Governing Standard
-                  </th>
-                </tr>
-
-              </thead>
-
-              <tbody className="divide-y divide-slate-100 font-mono">
-
-                {filteredAbbr.map(
-                  (item, idx) => (
-                    <tr
-                      key={idx}
-                      className="hover:bg-slate-50"
-                    >
-                      <td className="p-3 font-bold text-amber-700">
-                        {item.abbr}
-                      </td>
-
-                      <td className="p-3 font-sans font-semibold text-slate-900">
-                        {item.expansion}
-                      </td>
-
-                      <td className="p-3 text-slate-600 font-sans">
-                        {item.category}
-                      </td>
-
-                      <td className="p-3 text-right font-bold text-slate-800">
-                        {item.standard}
-                      </td>
-                    </tr>
+              <input
+                type="checkbox"
+                checked={
+                  showRejected
+                }
+                onChange={(
+                  event
+                ) =>
+                  setShowRejected(
+                    event.target.checked
                   )
-                )}
+                }
+                className="h-4 w-4"
+              />
 
-              </tbody>
+              Show rejected
 
-            </table>
-
-          </div>
+            </label>
+          )}
 
         </div>
-      )}
 
-      {/* =====================================================
-          AI WEIGHTS
-      ===================================================== */}
+        {/* ===================================================
+            AI CODE APPROVAL
+        =================================================== */}
 
-      {activeTab === 'ai' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
+        {activeTab ===
+          "approvals" && (
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
 
-          <div>
+            <div className="border-b border-slate-200 px-5 py-4">
 
-            <h2 className="text-base font-bold text-slate-900">
-              AI Dual-Encoder Scoring Weights
-            </h2>
-
-            <p className="text-xs text-slate-500">
-              Configure contribution of vector similarity vs
-              physical parameters in overall confidence score.
-            </p>
-
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-
-            <div className="space-y-2">
-
-              <div className="flex justify-between text-xs font-mono">
-
-                <span className="font-bold text-slate-700">
-                  Semantic Text Similarity
-                </span>
-
-                <strong className="text-indigo-600">
-                  {semanticWeight}%
-                </strong>
-
-              </div>
-
-              <input
-                type="range"
-                min="10"
-                max="50"
-                value={semanticWeight}
-                onChange={e =>
-                  setSemanticWeight(
-                    parseInt(
-                      e.target.value
-                    )
-                  )
-                }
-                className="w-full accent-indigo-600"
-              />
-
-            </div>
-
-            <div className="space-y-2">
-
-              <div className="flex justify-between text-xs font-mono">
-
-                <span className="font-bold text-slate-700">
-                  Material & Metallurgy Match
-                </span>
-
-                <strong className="text-emerald-600">
-                  {materialWeight}%
-                </strong>
-
-              </div>
-
-              <input
-                type="range"
-                min="10"
-                max="50"
-                value={materialWeight}
-                onChange={e =>
-                  setMaterialWeight(
-                    parseInt(
-                      e.target.value
-                    )
-                  )
-                }
-                className="w-full accent-emerald-600"
-              />
-
-            </div>
-
-            <div className="space-y-2">
-
-              <div className="flex justify-between text-xs font-mono">
-
-                <span className="font-bold text-slate-700">
-                  Grade & Composition Match
-                </span>
-
-                <strong className="text-cyan-600">
-                  {gradeWeight}%
-                </strong>
-
-              </div>
-
-              <input
-                type="range"
-                min="10"
-                max="50"
-                value={gradeWeight}
-                onChange={e =>
-                  setGradeWeight(
-                    parseInt(
-                      e.target.value
-                    )
-                  )
-                }
-                className="w-full accent-cyan-600"
-              />
-
-            </div>
-
-            <div className="space-y-2">
-
-              <div className="flex justify-between text-xs font-mono">
-
-                <span className="font-bold text-slate-700">
-                  Physical Dimension & Geometry
-                </span>
-
-                <strong className="text-amber-600">
-                  {dimensionWeight}%
-                </strong>
-
-              </div>
-
-              <input
-                type="range"
-                min="10"
-                max="50"
-                value={dimensionWeight}
-                onChange={e =>
-                  setDimensionWeight(
-                    parseInt(
-                      e.target.value
-                    )
-                  )
-                }
-                className="w-full accent-amber-600"
-              />
-
-            </div>
-
-          </div>
-
-          <div className="pt-4 border-t border-slate-100 flex justify-end">
-
-            <button
-              type="button"
-              onClick={
-                handleSaveWeights
-              }
-              className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-5 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer"
-            >
-
-              <Save className="w-4 h-4 text-emerald-400" />
-
-              Apply Dynamic Weights
-
-            </button>
-
-          </div>
-
-        </div>
-      )}
-
-      {/* =====================================================
-          GOVERNMENT + RBAC
-      ===================================================== */}
-
-      {activeTab === 'rbac' && (
-        <div className="space-y-5">
-
-          {/* =================================================
-              SYSTEM OVERVIEW
-          ================================================= */}
-
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-
-            <div className="bg-white rounded-2xl border border-slate-200 p-4">
-
-              <div className="flex items-center gap-2 text-slate-500 text-[10px] font-black uppercase tracking-wider">
-                <Users className="w-4 h-4" />
-                Total Accounts
-              </div>
-
-              <div className="text-2xl font-black text-slate-900 mt-2">
-                {totalUsers}
-              </div>
-
-            </div>
-
-            <div className="bg-white rounded-2xl border border-emerald-200 p-4">
-
-              <div className="flex items-center gap-2 text-emerald-600 text-[10px] font-black uppercase tracking-wider">
-                <UserCheck className="w-4 h-4" />
-                Active
-              </div>
-
-              <div className="text-2xl font-black text-slate-900 mt-2">
-                {activeUsers}
-              </div>
-
-            </div>
-
-            <div className="bg-white rounded-2xl border border-amber-200 p-4">
-
-              <div className="flex items-center gap-2 text-amber-600 text-[10px] font-black uppercase tracking-wider">
-                <Activity className="w-4 h-4" />
-                Pending
-              </div>
-
-              <div className="text-2xl font-black text-slate-900 mt-2">
-                {pendingUsers}
-              </div>
-
-            </div>
-
-            <div className="bg-white rounded-2xl border border-indigo-200 p-4">
-
-              <div className="flex items-center gap-2 text-indigo-600 text-[10px] font-black uppercase tracking-wider">
-                <Landmark className="w-4 h-4" />
-                Government
-              </div>
-
-              <div className="text-2xl font-black text-slate-900 mt-2">
-                {governmentUsers}
-              </div>
-
-            </div>
-
-            <div className="bg-white rounded-2xl border border-blue-200 p-4">
-
-              <div className="flex items-center gap-2 text-blue-600 text-[10px] font-black uppercase tracking-wider">
-                <Building2 className="w-4 h-4" />
-                Company
-              </div>
-
-              <div className="text-2xl font-black text-slate-900 mt-2">
-                {companyUsers}
-              </div>
-
-            </div>
-
-          </div>
-
-          {/* =================================================
-              GOVERNMENT ADMINISTRATION
-          ================================================= */}
-
-          <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-950 via-[#172554] to-slate-950 overflow-hidden shadow-sm">
-
-            <div className="p-5 border-b border-white/10">
-
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div className="flex items-center justify-between">
 
                 <div>
 
-                  <div className="inline-flex items-center gap-2 rounded-full border border-indigo-300/20 bg-indigo-400/10 px-3 py-1 text-[9px] font-black uppercase tracking-[0.15em] text-indigo-200">
-
-                    <Landmark className="w-3.5 h-3.5" />
-
-                    Government Administration
-
+                  <div className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-600">
+                    AI GOVERNANCE QUEUE
                   </div>
 
-                  <h2 className="text-xl font-black text-white mt-2">
-                    Government Officer Access
+                  <h2 className="mt-1 text-xl font-black text-slate-900">
+                    AI Code Approval
                   </h2>
 
-                  <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-                    Dedicated control center for Government
-                    accounts, CPSE administrators and
-                    authorized government officers.
-                  </p>
-
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    loadUsers()
-                  }
-                  disabled={
-                    refreshingUsers
-                  }
-                  className="self-start inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-bold text-white hover:bg-white/10 disabled:opacity-50"
-                >
-
-                  {refreshingUsers ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-4 h-4" />
-                  )}
-
-                  Refresh Government Registry
-
-                </button>
-
-              </div>
-
-            </div>
-
-            {/* GOVERNMENT METRICS */}
-
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/10">
-
-              <div className="bg-white/5 p-5">
-
-                <div className="text-[9px] font-black uppercase tracking-wider text-indigo-300">
-                  Registered Government
-                </div>
-
-                <div className="mt-1 text-3xl font-black text-white font-mono">
-                  {governmentUsers}
-                </div>
-
-                <div className="mt-1 text-[10px] text-slate-400">
-                  @gov.in government profiles
-                </div>
-
-              </div>
-
-              <div className="bg-white/5 p-5">
-
-                <div className="text-[9px] font-black uppercase tracking-wider text-amber-300">
-                  Awaiting Approval
-                </div>
-
-                <div className="mt-1 text-3xl font-black text-white font-mono">
-                  {pendingGovernmentUsers.length}
-                </div>
-
-                <div className="mt-1 text-[10px] text-slate-400">
-                  Require administrator action
-                </div>
-
-              </div>
-
-              <div className="bg-white/5 p-5">
-
-                <div className="text-[9px] font-black uppercase tracking-wider text-emerald-300">
-                  Active Officers
-                </div>
-
-                <div className="mt-1 text-3xl font-black text-white font-mono">
-                  {activeGovernmentUsers.length}
-                </div>
-
-                <div className="mt-1 text-[10px] text-slate-400">
-                  Authorized portal access
-                </div>
-
-              </div>
-
-              <div className="bg-white/5 p-5">
-
-                <div className="text-[9px] font-black uppercase tracking-wider text-cyan-300">
-                  Administrators
-                </div>
-
-                <div className="mt-1 text-3xl font-black text-white font-mono">
-                  {governmentAdministrators.length}
-                </div>
-
-                <div className="mt-1 text-[10px] text-slate-400">
-                  National / CPSE admin roles
+                <div className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[10px] font-black uppercase text-amber-700">
+                  {pendingCount} pending
                 </div>
 
               </div>
 
             </div>
 
-            {/* PENDING GOVERNMENT */}
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 p-12 text-sm font-bold text-slate-500">
 
-            <div className="p-5">
+                <Loader2 className="h-5 w-5 animate-spin" />
 
-              <div className="flex items-center justify-between mb-4">
-
-                <div>
-
-                  <h3 className="text-sm font-black text-white">
-                    Pending Government Registrations
-                  </h3>
-
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    These accounts remain inactive until
-                    explicitly approved.
-                  </p>
-
-                </div>
-
-                <span className="px-2.5 py-1 rounded-full bg-amber-400/10 border border-amber-300/20 text-[9px] font-black text-amber-300">
-                  {pendingGovernmentUsers.length} PENDING
-                </span>
+                Loading...
 
               </div>
-
-              {pendingGovernmentUsers.length === 0 ? (
-
-                <div className="rounded-xl border border-dashed border-white/10 bg-white/5 p-8 text-center">
-
-                  <MailCheck className="w-8 h-8 mx-auto text-emerald-400" />
-
-                  <div className="mt-2 text-sm font-bold text-white">
-                    No pending government registrations
-                  </div>
-
-                  <div className="mt-1 text-[10px] text-slate-400">
-                    All currently registered Government
-                    accounts have been reviewed.
-                  </div>
-
-                </div>
-
-              ) : (
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-
-                  {pendingGovernmentUsers.map(
-                    user => (
-                      <div
-                        key={
-                          user.user_id
-                        }
-                        className="rounded-xl border border-amber-300/20 bg-amber-400/5 p-4"
-                      >
-
-                        <div className="flex items-start justify-between gap-3">
-
-                          <div className="flex items-start gap-3 min-w-0">
-
-                            <div className="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-400/20 flex items-center justify-center shrink-0">
-
-                              <Landmark className="w-5 h-5 text-indigo-300" />
-
-                            </div>
-
-                            <div className="min-w-0">
-
-                              <div className="font-bold text-white text-sm">
-                                {user.full_name ||
-                                  'Unnamed Government User'}
-                              </div>
-
-                              <div className="font-mono text-[10px] text-slate-400 mt-1 break-all">
-                                {user.email ||
-                                  'No email'}
-                              </div>
-
-                            </div>
-
-                          </div>
-
-                          <span className="shrink-0 px-2 py-1 rounded-lg bg-amber-400/10 border border-amber-300/20 text-[8px] font-black text-amber-300">
-                            PENDING
-                          </span>
-
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 mt-4">
-
-                          <div className="rounded-lg bg-black/20 p-3">
-
-                            <div className="text-[8px] uppercase tracking-wider text-slate-500">
-                              Requested Role
-                            </div>
-
-                            <div className="mt-1 text-[10px] font-bold text-slate-200">
-                              {user.role ||
-                                'Pending User'}
-                            </div>
-
-                          </div>
-
-                          <div className="rounded-lg bg-black/20 p-3">
-
-                            <div className="text-[8px] uppercase tracking-wider text-slate-500">
-                              Organization
-                            </div>
-
-                            <div className="mt-1 text-[10px] font-bold text-slate-200">
-                              {user.company_name ||
-                                'Government'}
-                            </div>
-
-                          </div>
-
-                        </div>
-
-                        <div className="flex gap-2 mt-4">
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              quickGovernmentEdit(
-                                user
-                              )
-                            }
-                            className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-3 py-2 text-[10px] font-black text-slate-950 hover:bg-emerald-400"
-                          >
-
-                            <UserCheck className="w-3.5 h-3.5" />
-
-                            Review / Approve
-
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              quickGovernmentEdit(
-                                user
-                              )
-                            }
-                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-[10px] font-bold text-slate-300 hover:bg-white/10"
-                          >
-
-                            <UserCog className="w-3.5 h-3.5" />
-
-                            Manage
-
-                          </button>
-
-                        </div>
-
-                      </div>
-                    )
-                  )}
-
-                </div>
-
-              )}
-
-            </div>
-
-          </div>
-
-          {/* =================================================
-              GOVERNMENT ROLE GUIDE
-          ================================================= */}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-
-            <div className="p-4 bg-white rounded-xl border border-indigo-200">
-
-              <div className="flex items-center gap-2 font-bold text-indigo-900 text-sm">
-
-                <KeyRound className="w-4 h-4 text-indigo-600" />
-
-                National Administrator
-
-              </div>
-
-              <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
-                Full national governance, account
-                administration, material master and platform
-                configuration access.
-              </p>
-
-            </div>
-
-            <div className="p-4 bg-white rounded-xl border border-blue-200">
-
-              <div className="flex items-center gap-2 font-bold text-blue-900 text-sm">
-
-                <Building2 className="w-4 h-4 text-blue-600" />
-
-                CPSE Administrator
-
-              </div>
-
-              <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
-                Company-specific administration for authorized
-                CPSE organizations such as IOCL or ONGC.
-              </p>
-
-            </div>
-
-            <div className="p-4 bg-white rounded-xl border border-emerald-200">
-
-              <div className="flex items-center gap-2 font-bold text-emerald-900 text-sm">
-
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
-
-                Officer Roles
-
-              </div>
-
-              <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
-                Material Master, Procurement, Audit and
-                Executive Management access is assigned by the
-                administrator.
-              </p>
-
-            </div>
-
-            <div className="p-4 bg-white rounded-xl border border-rose-200">
-
-              <div className="flex items-center gap-2 font-bold text-rose-900 text-sm">
-
-                <Ban className="w-4 h-4 text-rose-600" />
-
-                Inactive Accounts
-
-              </div>
-
-              <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
-                Pending or deactivated Government accounts
-                cannot be treated as authorized portal users.
-              </p>
-
-            </div>
-
-          </div>
-
-          {/* =================================================
-              ALL USER MANAGEMENT
-          ================================================= */}
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-
-            <div className="p-5 border-b border-slate-200">
-
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-
-                <div>
-
-                  <h2 className="text-base font-bold text-slate-900">
-                    Complete Account Registry
-                  </h2>
-
-                  <p className="text-xs text-slate-500 mt-1">
-                    Manage Government and Company accounts,
-                    role assignments and activation.
-                  </p>
-
-                </div>
-
-                <button
-                  type="button"
-                  onClick={
-                    loadUsers
-                  }
-                  disabled={
-                    refreshingUsers
-                  }
-                  className="self-start lg:self-auto px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 flex items-center gap-2 disabled:opacity-50"
-                >
-
-                  {refreshingUsers ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  )}
-
-                  Refresh
-
-                </button>
-
-              </div>
-
-              <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
-
-                <div className="relative">
-
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-
-                  <input
-                    type="text"
-                    value={
-                      userSearch
-                    }
-                    onChange={e =>
-                      setUserSearch(
-                        e.target.value
-                      )
-                    }
-                    placeholder="Search email, name, company or role..."
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-blue-500 text-xs"
-                  />
-
-                </div>
-
-                <select
-                  value={
-                    userTypeFilter
-                  }
-                  onChange={e =>
-                    setUserTypeFilter(
-                      e.target.value as
-                        | 'ALL'
-                        | 'GOVERNMENT'
-                        | 'COMPANY'
-                    )
-                  }
-                  className="px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold focus:outline-none"
-                >
-
-                  <option value="ALL">
-                    All account types
-                  </option>
-
-                  <option value="COMPANY">
-                    Company / User
-                  </option>
-
-                  <option value="GOVERNMENT">
-                    Government
-                  </option>
-
-                </select>
-
-                <select
-                  value={
-                    statusFilter
-                  }
-                  onChange={e =>
-                    setStatusFilter(
-                      e.target.value as
-                        | 'ALL'
-                        | 'ACTIVE'
-                        | 'INACTIVE'
-                    )
-                  }
-                  className="px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold focus:outline-none"
-                >
-
-                  <option value="ALL">
-                    All statuses
-                  </option>
-
-                  <option value="ACTIVE">
-                    Active only
-                  </option>
-
-                  <option value="INACTIVE">
-                    Inactive / pending
-                  </option>
-
-                </select>
-
-              </div>
-
-            </div>
-
-            {usersError && (
-              <div className="m-5 p-4 rounded-xl bg-red-50 border border-red-200 flex items-start gap-3">
-
-                <XCircle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
-
-                <div>
-
-                  <div className="text-xs font-bold text-red-800">
-                    Unable to load users
-                  </div>
-
-                  <div className="text-[11px] text-red-700 mt-1">
-                    {usersError}
-                  </div>
-
-                </div>
-
-              </div>
-            )}
-
-            {usersLoading ? (
-
-              <div className="p-12 flex flex-col items-center justify-center">
-
-                <Loader2 className="w-7 h-7 animate-spin text-blue-600" />
-
-                <div className="text-xs font-bold text-slate-700 mt-3">
-                  Loading user profiles...
-                </div>
-
-              </div>
-
-            ) : filteredUsers.length === 0 ? (
-
+            ) : filteredApprovals.length ===
+              0 ? (
               <div className="p-12 text-center">
 
-                <Users className="w-9 h-9 text-slate-300 mx-auto" />
+                <ShieldCheck className="mx-auto h-10 w-10 text-slate-300" />
 
-                <div className="text-sm font-bold text-slate-700 mt-3">
-                  No users found
-                </div>
+                <h3 className="mt-4 font-black text-slate-700">
+                  No approval records found
+                </h3>
 
-                <div className="text-xs text-slate-400 mt-1">
-                  {users.length === 0
-                    ? 'No user profiles are currently configured.'
-                    : 'Try changing the search or filters.'}
-                </div>
+                <p className="mt-1 text-sm text-slate-400">
+                  AI material mappings waiting for government review will appear here.
+                </p>
 
               </div>
-
             ) : (
-
               <div className="overflow-x-auto">
 
-                <table className="w-full min-w-[1050px] text-left">
+                <table className="w-full min-w-[1250px] text-left">
 
-                  <thead className="bg-slate-50 border-y border-slate-200">
+                  <thead className="bg-slate-50">
 
-                    <tr className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">
+                    <tr className="border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500">
 
                       <th className="px-5 py-3">
-                        Account
+                        Company
                       </th>
 
                       <th className="px-5 py-3">
-                        Type
+                        Part / Material
                       </th>
 
                       <th className="px-5 py-3">
-                        Organization
+                        Company Code
                       </th>
 
                       <th className="px-5 py-3">
-                        Role
+                        AI / BMG Code
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Confidence
                       </th>
 
                       <th className="px-5 py-3">
                         Status
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Email
                       </th>
 
                       <th className="px-5 py-3 text-right">
@@ -1730,53 +1856,51 @@ export const AdminView: React.FC = () => {
 
                   <tbody className="divide-y divide-slate-100">
 
-                    {filteredUsers.map(
-                      user => {
+                    {filteredApprovals.map(
+                      (
+                        approval
+                      ) => (
+                        <React.Fragment
+                          key={
+                            approval.id
+                          }
+                        >
 
-                        const editing =
-                          editingUserId ===
-                          user.user_id;
-
-                        const saving =
-                          savingUserId ===
-                          user.user_id;
-
-                        return (
-
-                          <tr
-                            key={
-                              user.user_id
-                            }
-                            className="hover:bg-slate-50/70 align-top"
-                          >
-
-                            {/* ACCOUNT */}
+                          <tr className="hover:bg-slate-50">
 
                             <td className="px-5 py-4">
 
-                              <div className="flex items-start gap-3">
+                              <div className="flex items-center gap-3">
 
-                                <div className="w-9 h-9 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#002244] text-[10px] font-black text-white">
 
-                                  {user.user_type ===
-                                  'GOVERNMENT' ? (
-                                    <Landmark className="w-4 h-4 text-indigo-600" />
-                                  ) : (
-                                    <Building2 className="w-4 h-4 text-blue-600" />
-                                  )}
+                                  {(
+                                    approval.company_name ||
+                                    "UNK"
+                                  )
+                                    .slice(
+                                      0,
+                                      3
+                                    )
+                                    .toUpperCase()}
 
                                 </div>
 
-                                <div className="min-w-0">
+                                <div>
 
-                                  <div className="text-xs font-bold text-slate-900 truncate max-w-[250px]">
-                                    {user.full_name ||
-                                      'Unnamed User'}
+                                  <div className="font-black text-slate-900">
+                                    {
+                                      approval.company_name ||
+                                      "Unknown Company"
+                                    }
                                   </div>
 
-                                  <div className="text-[10px] font-mono text-slate-500 mt-1 truncate max-w-[250px]">
-                                    {user.email ||
-                                      'No email'}
+                                  <div className="text-[10px] text-slate-400">
+                                    Material ID{" "}
+                                    {
+                                      approval.company_material_id ??
+                                      "—"
+                                    }
                                   </div>
 
                                 </div>
@@ -1785,283 +1909,262 @@ export const AdminView: React.FC = () => {
 
                             </td>
 
-                            {/* TYPE */}
-
                             <td className="px-5 py-4">
 
-                              {editing ? (
-
-                                <select
-                                  value={
-                                    editingUserType
-                                  }
-                                  onChange={e =>
-                                    setEditingUserType(
-                                      e.target.value as
-                                        | 'GOVERNMENT'
-                                        | 'COMPANY'
-                                    )
-                                  }
-                                  className="px-2.5 py-2 rounded-lg border border-slate-200 bg-white text-xs font-bold focus:outline-none"
-                                >
-
-                                  {USER_TYPES.map(
-                                    type => (
-
-                                      <option
-                                        key={
-                                          type
-                                        }
-                                        value={
-                                          type
-                                        }
-                                      >
-                                        {type ===
-                                        'GOVERNMENT'
-                                          ? 'Government'
-                                          : 'Company / User'}
-                                      </option>
-
-                                    )
-                                  )}
-
-                                </select>
-
-                              ) : (
-
-                                <span
-                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-black ${
-                                    user.user_type ===
-                                    'GOVERNMENT'
-                                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                      : 'bg-blue-50 text-blue-700 border-blue-200'
-                                  }`}
-                                >
-
-                                  {user.user_type ===
-                                  'GOVERNMENT' ? (
-                                    <Landmark className="w-3 h-3" />
-                                  ) : (
-                                    <Building2 className="w-3 h-3" />
-                                  )}
-
-                                  {user.user_type ===
-                                  'GOVERNMENT'
-                                    ? 'GOVERNMENT'
-                                    : 'COMPANY / USER'}
-
-                                </span>
-
-                              )}
+                              <div className="font-bold text-slate-900">
+                                {
+                                  approval.part_name ||
+                                  "Unnamed Material"
+                                }
+                              </div>
 
                             </td>
 
-                            {/* ORGANIZATION */}
-
                             <td className="px-5 py-4">
 
-                              {editing ? (
+                              <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold text-slate-700">
 
-                                <input
-                                  type="text"
-                                  value={
-                                    editingCompany
-                                  }
-                                  onChange={e =>
-                                    setEditingCompany(
-                                      e.target.value
-                                    )
-                                  }
-                                  placeholder="Company / CPSE name"
-                                  className="w-[190px] px-2.5 py-2 rounded-lg border border-slate-200 bg-white text-xs focus:outline-none focus:border-blue-500"
-                                />
+                                {
+                                  approval.company_material_code ||
+                                  "—"
+                                }
 
-                              ) : (
-
-                                <div className="text-xs font-semibold text-slate-700">
-
-                                  {user.company_name ||
-                                    (
-                                      user.user_type ===
-                                      'GOVERNMENT'
-                                        ? 'Government'
-                                        : 'Not assigned'
-                                    )}
-
-                                </div>
-
-                              )}
+                              </span>
 
                             </td>
 
-                            {/* ROLE */}
-
                             <td className="px-5 py-4">
 
-                              {editing ? (
+                              <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 font-mono text-xs font-black text-emerald-700">
 
-                                <select
-                                  value={
-                                    editingRole
-                                  }
-                                  onChange={e =>
-                                    setEditingRole(
-                                      e.target.value
-                                    )
-                                  }
-                                  className="w-[250px] px-2.5 py-2 rounded-lg border border-slate-200 bg-white text-xs font-bold focus:outline-none"
-                                >
+                                {
+                                  approval.ai_standard_code ||
+                                  "—"
+                                }
 
-                                  {AVAILABLE_ROLES.map(
-                                    role => (
-
-                                      <option
-                                        key={
-                                          role
-                                        }
-                                        value={
-                                          role
-                                        }
-                                      >
-                                        {role}
-                                      </option>
-
-                                    )
-                                  )}
-
-                                </select>
-
-                              ) : (
-
-                                <div className="text-xs font-bold text-slate-800">
-                                  {user.role}
-                                </div>
-
-                              )}
+                              </span>
 
                             </td>
 
-                            {/* STATUS */}
+                            <td className="px-5 py-4 font-mono text-sm font-black text-slate-900">
 
-                            <td className="px-5 py-4">
-
-                              {editing ? (
-
-                                <label className="flex items-center gap-2 cursor-pointer">
-
-                                  <input
-                                    type="checkbox"
-                                    checked={
-                                      editingActive
-                                    }
-                                    onChange={e =>
-                                      setEditingActive(
-                                        e.target.checked
-                                      )
-                                    }
-                                    className="w-4 h-4 accent-emerald-600"
-                                  />
-
-                                  <span className="text-xs font-bold text-slate-700">
-                                    Active
-                                  </span>
-
-                                </label>
-
-                              ) : (
-
-                                <span
-                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-black ${
-                                    user.is_active
-                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                      : 'bg-amber-50 text-amber-700 border-amber-200'
-                                  }`}
-                                >
-
-                                  {user.is_active ? (
-                                    <UserCheck className="w-3 h-3" />
-                                  ) : (
-                                    <UserX className="w-3 h-3" />
-                                  )}
-
-                                  {user.is_active
-                                    ? 'ACTIVE'
-                                    : 'PENDING / INACTIVE'}
-
-                                </span>
-
-                              )}
+                              {
+                                formatConfidence(
+                                  approval.ai_confidence
+                                )
+                              }
 
                             </td>
 
-                            {/* ACTION */}
+                            <td className="px-5 py-4">
 
-                            <td className="px-5 py-4 text-right">
+                              <span
+                                className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${statusClass(
+                                  approval.approval_status
+                                )}`}
+                              >
+                                {
+                                  prettyStatus(
+                                    approval.approval_status
+                                  )
+                                }
+                              </span>
 
-                              {editing ? (
+                            </td>
 
-                                <div className="flex items-center justify-end gap-2">
+                            <td className="px-5 py-4">
 
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      cancelEditingUser()
-                                    }
-                                    disabled={
-                                      saving
-                                    }
-                                    className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-600"
-                                  >
-                                    Cancel
-                                  </button>
+                              <span
+                                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${emailStatusClass(
+                                  approval.email_status
+                                )}`}
+                              >
 
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      saveUser(
-                                        user.user_id
-                                      )
-                                    }
-                                    disabled={
-                                      saving
-                                    }
-                                    className="px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-2 disabled:opacity-50"
-                                  >
+                                <Mail className="h-3 w-3" />
 
-                                    {saving ? (
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    ) : (
-                                      <Save className="w-3.5 h-3.5" />
-                                    )}
+                                {
+                                  prettyStatus(
+                                    approval.email_status
+                                  )
+                                }
 
-                                    Save
+                              </span>
 
-                                  </button>
+                            </td>
 
-                                </div>
+                            <td className="px-5 py-4">
 
-                              ) : (
+                              <div className="flex justify-end gap-2">
 
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    startEditingUser(
-                                      user
+                                    setExpandedApprovalId(
+                                      expandedApprovalId ===
+                                        approval.id
+                                        ? null
+                                        : approval.id
                                     )
                                   }
-                                  className="px-3 py-2 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-xs font-bold text-slate-700"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold text-slate-600 hover:bg-slate-50"
                                 >
-                                  Manage
+
+                                  <Eye className="h-3.5 w-3.5" />
+
+                                  Details
+
+                                  {expandedApprovalId ===
+                                  approval.id ? (
+                                    <ChevronUp className="h-3 w-3" />
+                                  ) : (
+                                    <ChevronDown className="h-3 w-3" />
+                                  )}
+
                                 </button>
 
-                              )}
+                                {approval.approval_status ===
+                                  "PENDING" && (
+                                  <>
+
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        processingId ===
+                                        approval.id
+                                      }
+                                      onClick={() =>
+                                        void handleApprove(
+                                          approval
+                                        )
+                                      }
+                                      className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-black text-white hover:bg-emerald-700 disabled:opacity-50"
+                                    >
+
+                                      {processingId ===
+                                      approval.id ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                      )}
+
+                                      Approve
+
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        processingId ===
+                                        approval.id
+                                      }
+                                      onClick={() =>
+                                        void handleReject(
+                                          approval
+                                        )
+                                      }
+                                      className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-2 text-[10px] font-black text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                    >
+
+                                      <XCircle className="h-3.5 w-3.5" />
+
+                                      Reject
+
+                                    </button>
+
+                                  </>
+                                )}
+
+                              </div>
 
                             </td>
 
                           </tr>
 
-                        );
-                      }
+                          {expandedApprovalId ===
+                            approval.id && (
+                            <tr className="bg-slate-50">
+
+                              <td
+                                colSpan={
+                                  8
+                                }
+                                className="px-5 py-5"
+                              >
+
+                                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+
+                                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+
+                                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                                      Created
+                                    </div>
+
+                                    <div className="mt-1 text-xs font-bold text-slate-800">
+                                      {
+                                        formatDate(
+                                          approval.created_at
+                                        )
+                                      }
+                                    </div>
+
+                                  </div>
+
+                                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+
+                                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                                      Approved At
+                                    </div>
+
+                                    <div className="mt-1 text-xs font-bold text-slate-800">
+                                      {
+                                        formatDate(
+                                          approval.approved_at
+                                        )
+                                      }
+                                    </div>
+
+                                  </div>
+
+                                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+
+                                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                                      Email Sent
+                                    </div>
+
+                                    <div className="mt-1 text-xs font-bold text-slate-800">
+                                      {
+                                        formatDate(
+                                          approval.email_sent_at
+                                        )
+                                      }
+                                    </div>
+
+                                  </div>
+
+                                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+
+                                    <div className="text-[10px] font-bold uppercase text-slate-400">
+                                      Rejection Reason
+                                    </div>
+
+                                    <div className="mt-1 text-xs text-slate-700">
+                                      {
+                                        approval.rejection_reason ||
+                                        "—"
+                                      }
+                                    </div>
+
+                                  </div>
+
+                                </div>
+
+                              </td>
+
+                            </tr>
+                          )}
+
+                        </React.Fragment>
+                      )
                     )}
 
                   </tbody>
@@ -2069,8 +2172,800 @@ export const AdminView: React.FC = () => {
                 </table>
 
               </div>
-
             )}
+
+          </section>
+        )}
+
+        {/* ===================================================
+            DATASHEETS
+        =================================================== */}
+
+        {activeTab ===
+          "datasheets" && (
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+
+            <div className="border-b border-slate-200 px-5 py-4">
+
+              <div className="flex items-center gap-3">
+
+                <div className="rounded-xl bg-blue-50 p-2.5">
+                  <FileText className="h-5 w-5 text-blue-600" />
+                </div>
+
+                <div>
+
+                  <h2 className="font-black text-slate-900">
+                    All Datasheets
+                  </h2>
+
+                  <p className="text-xs text-slate-500">
+                    All uploaded source documents with their associated companies.
+                  </p>
+
+                </div>
+
+              </div>
+
+            </div>
+
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 p-12 text-sm font-bold text-slate-500">
+
+                <Loader2 className="h-5 w-5 animate-spin" />
+
+                Loading datasheets...
+
+              </div>
+            ) : filteredDatasheets.length ===
+              0 ? (
+              <div className="p-12 text-center">
+
+                <FileText className="mx-auto h-10 w-10 text-slate-300" />
+
+                <h3 className="mt-4 font-black text-slate-700">
+                  No datasheets found
+                </h3>
+
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+
+                <table className="w-full min-w-[1000px] text-left">
+
+                  <thead className="bg-slate-50">
+
+                    <tr className="border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500">
+
+                      <th className="px-5 py-3">
+                        Company
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Datasheet
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Type
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Extraction
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Uploaded
+                      </th>
+
+                      <th className="px-5 py-3 text-right">
+                        Action
+                      </th>
+
+                    </tr>
+
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100">
+
+                    {filteredDatasheets.map(
+                      (
+                        datasheet
+                      ) => (
+                        <tr
+                          key={
+                            datasheet.datasheet_id
+                          }
+                          className="hover:bg-slate-50"
+                        >
+
+                          <td className="px-5 py-4">
+
+                            <div className="flex items-center gap-2">
+
+                              <Building2 className="h-4 w-4 text-slate-400" />
+
+                              <span className="font-black text-slate-900">
+                                {
+                                  datasheet.company_name
+                                }
+                              </span>
+
+                            </div>
+
+                          </td>
+
+                          <td className="px-5 py-4">
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedDatasheet(
+                                  datasheet
+                                )
+                              }
+                              className="text-left"
+                            >
+
+                              <div className="font-bold text-blue-700 hover:underline">
+                                {
+                                  datasheet.file_name ||
+                                  "Unnamed datasheet"
+                                }
+                              </div>
+
+                              <div className="mt-1 text-[10px] text-slate-400">
+                                ID{" "}
+                                {
+                                  datasheet.datasheet_id
+                                }
+                              </div>
+
+                            </button>
+
+                          </td>
+
+                          <td className="px-5 py-4 text-xs text-slate-600">
+                            {
+                              datasheet.file_type ||
+                              "—"
+                            }
+                          </td>
+
+                          <td className="px-5 py-4">
+
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-slate-600">
+                              {
+                                datasheet.extraction_status ||
+                                "UNKNOWN"
+                              }
+                            </span>
+
+                          </td>
+
+                          <td className="px-5 py-4 text-xs text-slate-600">
+                            {
+                              formatDate(
+                                datasheet.created_at
+                              )
+                            }
+                          </td>
+
+                          <td className="px-5 py-4 text-right">
+
+                            <button
+                              type="button"
+                              disabled={
+                                processingId ===
+                                `datasheet-${datasheet.datasheet_id}`
+                              }
+                              onClick={() =>
+                                void handleDeleteDatasheet(
+                                  datasheet
+                                )
+                              }
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-[10px] font-black text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            >
+
+                              {processingId ===
+                              `datasheet-${datasheet.datasheet_id}` ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3.5 w-3.5" />
+                              )}
+
+                              Remove
+
+                            </button>
+
+                          </td>
+
+                        </tr>
+                      )
+                    )}
+
+                  </tbody>
+
+                </table>
+
+              </div>
+            )}
+
+          </section>
+        )}
+
+        {/* ===================================================
+            PRODUCTS
+        =================================================== */}
+
+        {activeTab ===
+          "products" && (
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+
+            <div className="border-b border-slate-200 px-5 py-4">
+
+              <div className="flex items-center gap-3">
+
+                <div className="rounded-xl bg-emerald-50 p-2.5">
+                  <Package className="h-5 w-5 text-emerald-600" />
+                </div>
+
+                <div>
+
+                  <h2 className="font-black text-slate-900">
+                    Product / Material Details
+                  </h2>
+
+                  <p className="text-xs text-slate-500">
+                    Structured records from company materials.
+                  </p>
+
+                </div>
+
+              </div>
+
+            </div>
+
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 p-12 text-sm font-bold text-slate-500">
+
+                <Loader2 className="h-5 w-5 animate-spin" />
+
+                Loading products...
+
+              </div>
+            ) : filteredProducts.length ===
+              0 ? (
+              <div className="p-12 text-center">
+
+                <Package className="mx-auto h-10 w-10 text-slate-300" />
+
+                <h3 className="mt-4 font-black text-slate-700">
+                  No products found
+                </h3>
+
+                <p className="mt-1 text-sm text-slate-400">
+                  No records were returned from company_materials.
+                </p>
+
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+
+                <table className="w-full min-w-[1250px] text-left">
+
+                  <thead className="bg-slate-50">
+
+                    <tr className="border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500">
+
+                      <th className="px-5 py-3">
+                        Company
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Material
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Company Code
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Family
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Manufacturer
+                      </th>
+
+                      <th className="px-5 py-3">
+                        Model
+                      </th>
+
+                      <th className="px-5 py-3 text-right">
+                        Details
+                      </th>
+
+                    </tr>
+
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100">
+
+                    {filteredProducts.map(
+                      (
+                        product
+                      ) => (
+                        <tr
+                          key={
+                            product.material_id
+                          }
+                          className="hover:bg-slate-50"
+                        >
+
+                          <td className="px-5 py-4">
+
+                            <div className="flex items-center gap-2">
+
+                              <Building2 className="h-4 w-4 text-slate-400" />
+
+                              <span className="font-black text-slate-900">
+                                {
+                                  product.company_name
+                                }
+                              </span>
+
+                            </div>
+
+                          </td>
+
+                          <td className="max-w-sm px-5 py-4">
+
+                            <div className="font-bold text-slate-900">
+                              {
+                                product.material_name ||
+                                "Unnamed Material"
+                              }
+                            </div>
+
+                            <div className="mt-1 truncate text-xs text-slate-500">
+                              {
+                                product.description ||
+                                "No description"
+                              }
+                            </div>
+
+                          </td>
+
+                          <td className="px-5 py-4">
+
+                            <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs font-bold text-slate-700">
+                              {
+                                product.company_material_code ||
+                                "—"
+                              }
+                            </span>
+
+                          </td>
+
+                          <td className="px-5 py-4 text-xs font-bold text-slate-700">
+                            {
+                              product.material_family ||
+                              "—"
+                            }
+                          </td>
+
+                          <td className="px-5 py-4 text-xs text-slate-600">
+                            {
+                              product.manufacturer ||
+                              "—"
+                            }
+                          </td>
+
+                          <td className="px-5 py-4 text-xs text-slate-600">
+                            {
+                              product.model ||
+                              "—"
+                            }
+                          </td>
+
+                          <td className="px-5 py-4 text-right">
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedProduct(
+                                  product
+                                )
+                              }
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-700 hover:bg-slate-50"
+                            >
+
+                              <Eye className="h-3.5 w-3.5" />
+
+                              View Details
+
+                            </button>
+
+                          </td>
+
+                        </tr>
+                      )
+                    )}
+
+                  </tbody>
+
+                </table>
+
+              </div>
+            )}
+
+          </section>
+        )}
+
+      </div>
+
+      {/* =====================================================
+          PRODUCT MODAL
+      ===================================================== */}
+
+      {selectedProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+
+          <div className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+
+              <div>
+
+                <div className="text-[10px] font-black uppercase tracking-wider text-emerald-600">
+                  MATERIAL DETAILS
+                </div>
+
+                <h2 className="mt-1 text-xl font-black text-slate-900">
+                  {
+                    selectedProduct.material_name ||
+                    "Unnamed Material"
+                  }
+                </h2>
+
+                <div className="mt-1 text-xs font-bold text-slate-500">
+
+                  {
+                    selectedProduct.company_name
+                  }
+
+                  {" • "}
+
+                  {
+                    selectedProduct.company_material_code ||
+                    "No company code"
+                  }
+
+                </div>
+
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedProduct(
+                    null
+                  )
+                }
+                className="rounded-xl border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+
+            </div>
+
+            <div className="max-h-[calc(90vh-90px)] overflow-y-auto p-6">
+
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Description
+                  </div>
+
+                  <div className="mt-2 text-sm leading-6 text-slate-700">
+                    {
+                      selectedProduct.description ||
+                      "—"
+                    }
+                  </div>
+
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Material Family
+                  </div>
+
+                  <div className="mt-2 text-sm font-bold text-slate-800">
+                    {
+                      selectedProduct.material_family ||
+                      "—"
+                    }
+                  </div>
+
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Manufacturer
+                  </div>
+
+                  <div className="mt-2 text-sm font-bold text-slate-800">
+                    {
+                      selectedProduct.manufacturer ||
+                      "—"
+                    }
+                  </div>
+
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Model
+                  </div>
+
+                  <div className="mt-2 text-sm font-bold text-slate-800">
+                    {
+                      selectedProduct.model ||
+                      "—"
+                    }
+                  </div>
+
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Pressure Rating
+                  </div>
+
+                  <div className="mt-2 text-sm font-bold text-slate-800">
+                    {
+                      selectedProduct.pressure_rating ||
+                      "—"
+                    }
+                  </div>
+
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Temperature Rating
+                  </div>
+
+                  <div className="mt-2 text-sm font-bold text-slate-800">
+                    {
+                      selectedProduct.temperature_rating ||
+                      "—"
+                    }
+                  </div>
+
+                </div>
+
+              </div>
+
+              <div className="mt-6 grid gap-4 lg:grid-cols-2">
+
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+
+                  <div className="mb-2 text-[10px] font-black uppercase text-slate-400">
+                    Standards
+                  </div>
+
+                  <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-700">
+                    {
+                      stringifyValue(
+                        selectedProduct.standards
+                      )
+                    }
+                  </pre>
+
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+
+                  <div className="mb-2 text-[10px] font-black uppercase text-slate-400">
+                    Dimensions
+                  </div>
+
+                  <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-700">
+                    {
+                      stringifyValue(
+                        selectedProduct.dimensions
+                      )
+                    }
+                  </pre>
+
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+
+                  <div className="mb-2 text-[10px] font-black uppercase text-slate-400">
+                    Design Features
+                  </div>
+
+                  <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-700">
+                    {
+                      stringifyValue(
+                        selectedProduct.design_features
+                      )
+                    }
+                  </pre>
+
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+
+                  <div className="mb-2 text-[10px] font-black uppercase text-slate-400">
+                    Other Attributes
+                  </div>
+
+                  <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-700">
+                    {
+                      stringifyValue(
+                        selectedProduct.other_attributes
+                      )
+                    }
+                  </pre>
+
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
+      {/* =====================================================
+          DATASHEET MODAL
+      ===================================================== */}
+
+      {selectedDatasheet && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+
+          <div className="w-full max-w-2xl rounded-3xl bg-white shadow-2xl">
+
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+
+              <div>
+
+                <div className="text-[10px] font-black uppercase tracking-wider text-blue-600">
+                  DATASHEET
+                </div>
+
+                <h2 className="mt-1 text-xl font-black text-slate-900">
+                  {
+                    selectedDatasheet.file_name ||
+                    "Unnamed Datasheet"
+                  }
+                </h2>
+
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedDatasheet(
+                    null
+                  )
+                }
+                className="rounded-xl border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+
+            </div>
+
+            <div className="space-y-4 p-6">
+
+              <div className="grid gap-4 sm:grid-cols-2">
+
+                <div className="rounded-xl bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Company
+                  </div>
+
+                  <div className="mt-1 font-black text-slate-900">
+                    {
+                      selectedDatasheet.company_name
+                    }
+                  </div>
+
+                </div>
+
+                <div className="rounded-xl bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Datasheet ID
+                  </div>
+
+                  <div className="mt-1 font-mono font-black text-slate-900">
+                    {
+                      selectedDatasheet.datasheet_id
+                    }
+                  </div>
+
+                </div>
+
+                <div className="rounded-xl bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    File Type
+                  </div>
+
+                  <div className="mt-1 font-bold text-slate-800">
+                    {
+                      selectedDatasheet.file_type ||
+                      "—"
+                    }
+                  </div>
+
+                </div>
+
+                <div className="rounded-xl bg-slate-50 p-4">
+
+                  <div className="text-[10px] font-bold uppercase text-slate-400">
+                    Extraction
+                  </div>
+
+                  <div className="mt-1 font-bold text-slate-800">
+                    {
+                      selectedDatasheet.extraction_status ||
+                      "—"
+                    }
+                  </div>
+
+                </div>
+
+              </div>
+
+              <div className="rounded-xl border border-slate-200 p-4">
+
+                <div className="text-[10px] font-bold uppercase text-slate-400">
+                  Storage Path
+                </div>
+
+                <div className="mt-2 break-all font-mono text-xs leading-5 text-slate-700">
+                  {
+                    selectedDatasheet.file_path ||
+                    "—"
+                  }
+                </div>
+
+              </div>
+
+              <div className="text-right">
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedDatasheet(
+                      null
+                    )
+                  }
+                  className="rounded-xl bg-[#002244] px-5 py-3 text-xs font-black text-white hover:bg-[#003d73]"
+                >
+                  Close
+                </button>
+
+              </div>
+
+            </div>
 
           </div>
 
@@ -2079,4 +2974,4 @@ export const AdminView: React.FC = () => {
 
     </div>
   );
-};
+}
