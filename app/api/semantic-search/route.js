@@ -1,1271 +1,1562 @@
-import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { GoogleGenAI } from "@google/genai";
-import crypto from "node:crypto";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-const EMBEDDING_MODEL = "gemini-embedding-2";
-const EMBEDDING_DIMENSIONS = 768;
-const MAX_MATCHES = 100;
+/* =========================================================
+   CONFIG
+========================================================= */
 
-const APPROVAL_SIMILARITY_THRESHOLD = 0.85;
+const SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const GEMINI_API_KEY =
+  process.env.GEMINI_API_KEY ||
+  process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
+const EMBEDDING_MODEL =
+  "gemini-embedding-2";
+
+const EMBEDDING_DIMENSIONS =
+  768;
+
+const APPROVAL_THRESHOLD =
+  0.85;
+
+/* =========================================================
+   CLIENTS
+========================================================= */
 
 function getSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url) {
-    throw new Error("NEXT_PUBLIC_SUPABASE_URL is missing.");
-  }
-
-  if (!key) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY is missing.");
-  }
-
-  return createClient(url, key, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  return createClient(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
 }
 
 function getGemini() {
-  const key = process.env.GEMINI_API_KEY;
-
-  if (!key) {
-    throw new Error("GEMINI_API_KEY is missing.");
+  if (!GEMINI_API_KEY) {
+    throw new Error(
+      "Gemini API key is not configured."
+    );
   }
 
-  return new GoogleGenAI({
-    apiKey: key,
-  });
+  return new GoogleGenerativeAI(
+    GEMINI_API_KEY
+  );
 }
 
-function safeText(value) {
-  if (value === null || value === undefined) {
-    return "";
+/* =========================================================
+   RESPONSE HELPERS
+========================================================= */
+
+function json(
+  data,
+  status = 200
+) {
+  return Response.json(
+    data,
+    {
+      status,
+      headers: {
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    }
+  );
+}
+
+/* =========================================================
+   NORMALIZATION
+========================================================= */
+
+function normalizeText(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function normalizeCode(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+/* =========================================================
+   COSINE SIMILARITY
+========================================================= */
+
+function cosineSimilarity(
+  a,
+  b
+) {
+  if (
+    !Array.isArray(a) ||
+    !Array.isArray(b) ||
+    a.length === 0 ||
+    b.length === 0
+  ) {
+    return 0;
   }
 
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return "";
+  const length =
+    Math.min(
+      a.length,
+      b.length
+    );
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (
+    let i = 0;
+    i < length;
+    i++
+  ) {
+    const x =
+      Number(a[i]) || 0;
+
+    const y =
+      Number(b[i]) || 0;
+
+    dot += x * y;
+    normA += x * x;
+    normB += y * y;
+  }
+
+  if (
+    normA === 0 ||
+    normB === 0
+  ) {
+    return 0;
+  }
+
+  return (
+    dot /
+    (Math.sqrt(normA) *
+      Math.sqrt(normB))
+  );
+}
+
+/* =========================================================
+   GEMINI EMBEDDING
+========================================================= */
+
+async function createEmbedding(
+  text
+) {
+  const genAI =
+    getGemini();
+
+  const model =
+    genAI.getGenerativeModel({
+      model:
+        EMBEDDING_MODEL,
+    });
+
+  const result =
+    await model.embedContent({
+      content: {
+        parts: [
+          {
+            text,
+          },
+        ],
+      },
+      outputDimensionality:
+        EMBEDDING_DIMENSIONS,
+    });
+
+  const values =
+    result?.embedding
+      ?.values;
+
+  if (
+    !Array.isArray(values) ||
+    values.length === 0
+  ) {
+    throw new Error(
+      "Gemini returned an empty embedding."
+    );
+  }
+
+  return values;
+}
+
+/* =========================================================
+   MATERIAL SEARCH TEXT
+========================================================= */
+
+function buildMaterialText(
+  material
+) {
+  return [
+    material.company,
+    material.material_number,
+    material.description,
+    material.specifications,
+    material.category,
+  ]
+    .filter(
+      (value) =>
+        value !== null &&
+        value !== undefined &&
+        String(value).trim() !== ""
+    )
+    .join(" | ");
+}
+
+/* =========================================================
+   LOAD MATERIALS
+========================================================= */
+
+async function loadMaterials(
+  supabase
+) {
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("materials")
+    .select(
+      [
+        "id",
+        "company",
+        "company_id",
+        "material_number",
+        "description",
+        "specifications",
+        "category",
+      ].join(",")
+    );
+
+  if (error) {
+    throw new Error(
+      `Failed to load materials: ${error.message}`
+    );
+  }
+
+  return data || [];
+}
+
+/* =========================================================
+   LOAD COMPANY MATERIALS
+========================================================= */
+
+async function loadCompanyMaterials(
+  supabase
+) {
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("company_materials")
+    .select("*");
+
+  if (error) {
+    throw new Error(
+      `Failed to load company materials: ${error.message}`
+    );
+  }
+
+  return data || [];
+}
+
+/* =========================================================
+   RESOLVE MATERIAL → COMPANY MATERIAL
+========================================================= */
+
+/*
+ * THIS IS THE MOST IMPORTANT FIX.
+ *
+ * materials.id is NOT the same thing as
+ * company_materials.material_id.
+ *
+ * We resolve:
+ *
+ * materials.id
+ *      ↓
+ * company_id + material_number
+ *      ↓
+ * company_materials.company_id + company_material_code
+ *      ↓
+ * company_materials.material_id
+ */
+
+function findCompanyMaterialForMaterial(
+  material,
+  companyMaterials
+) {
+  if (!material) {
+    return null;
+  }
+
+  const materialCompanyId =
+    material.company_id;
+
+  const materialCode =
+    normalizeCode(
+      material.material_number
+    );
+
+  /*
+   * -------------------------------------------------------
+   * Exact company ID + material code
+   * -------------------------------------------------------
+   */
+
+  if (
+    materialCompanyId !==
+      null &&
+    materialCompanyId !==
+      undefined &&
+    materialCode
+  ) {
+    const exact =
+      companyMaterials.find(
+        (row) =>
+          String(
+            row.company_id
+          ) ===
+            String(
+              materialCompanyId
+            ) &&
+          normalizeCode(
+            row.company_material_code
+          ) === materialCode
+      );
+
+    if (exact) {
+      return exact;
     }
   }
 
-  return String(value);
+  /*
+   * -------------------------------------------------------
+   * Material code only fallback
+   * -------------------------------------------------------
+   */
+
+  if (materialCode) {
+    const matches =
+      companyMaterials.filter(
+        (row) =>
+          normalizeCode(
+            row.company_material_code
+          ) === materialCode
+      );
+
+    if (
+      matches.length ===
+      1
+    ) {
+      return matches[0];
+    }
+  }
+
+  return null;
 }
 
-function normalizeText(value) {
-  return safeText(value)
-    .replace(/\s+/g, " ")
-    .trim();
-}
+/* =========================================================
+   LOAD REJECTED MATERIALS
+========================================================= */
 
-function normalizeCompany(value) {
-  return normalizeText(value).toUpperCase();
-}
+/*
+ * ai_code_approvals contains:
+ *
+ * company_material_id
+ *
+ * which points to:
+ *
+ * company_materials.material_id
+ *
+ * NOT materials.id.
+ *
+ * Therefore rejected IDs must be converted before
+ * filtering materials.
+ */
 
-function buildMaterialSearchText(material) {
-  return [
-    `company: ${normalizeText(material.company)}`,
-    `material number: ${normalizeText(material.material_number)}`,
-    `description: ${normalizeText(material.description)}`,
-    `category: ${normalizeText(material.category)}`,
-    `specifications: ${normalizeText(material.specifications)}`,
-  ]
-    .filter((value) => value.trim() !== "")
-    .join("\n");
-}
+async function getRejectedMaterialIds(
+  supabase,
+  materials,
+  companyMaterials
+) {
+  const {
+    data: rejectedApprovals,
+    error,
+  } = await supabase
+    .from("ai_code_approvals")
+    .select(
+      "company_material_id, approval_status"
+    )
+    .eq(
+      "approval_status",
+      "REJECTED"
+    );
 
-function buildQuerySearchText({
-  company,
-  materialNumber,
-  description,
-  specifications,
-  category,
-}) {
-  return [
-    company
-      ? `company: ${normalizeText(company)}`
-      : "",
-
-    materialNumber
-      ? `material number: ${normalizeText(materialNumber)}`
-      : "",
-
-    description
-      ? `description: ${normalizeText(description)}`
-      : "",
-
-    category
-      ? `category: ${normalizeText(category)}`
-      : "",
-
-    specifications
-      ? `specifications: ${normalizeText(specifications)}`
-      : "",
-  ]
-    .filter((value) => value.trim() !== "")
-    .join("\n");
-}
-
-async function generateEmbedding(text) {
-  const ai = getGemini();
-
-  const response = await ai.models.embedContent({
-    model: EMBEDDING_MODEL,
-    contents: text,
-    config: {
-      outputDimensionality: EMBEDDING_DIMENSIONS,
-    },
-  });
-
-  const embedding =
-    response?.embeddings?.[0]?.values;
-
-  if (!Array.isArray(embedding)) {
+  if (error) {
     throw new Error(
-      "Gemini did not return an embedding."
+      `Failed to load rejected approvals: ${error.message}`
     );
   }
 
   if (
-    embedding.length !==
-    EMBEDDING_DIMENSIONS
+    !rejectedApprovals ||
+    rejectedApprovals.length === 0
   ) {
-    throw new Error(
-      `Invalid embedding dimensions. Expected ${EMBEDDING_DIMENSIONS}, received ${embedding.length}.`
+    return new Set();
+  }
+
+  const rejectedCompanyMaterialIds =
+    new Set(
+      rejectedApprovals
+        .map(
+          (row) =>
+            String(
+              row.company_material_id
+            )
+        )
+        .filter(Boolean)
     );
-  }
 
-  return embedding;
-}
+  const rejectedActualMaterialIds =
+    new Set();
 
-function normalizeSimilarity(value) {
-  const numeric = Number(value ?? 0);
+  for (
+    const material of materials
+  ) {
+    const companyMaterial =
+      findCompanyMaterialForMaterial(
+        material,
+        companyMaterials
+      );
 
-  if (!Number.isFinite(numeric)) {
-    return 0;
-  }
-
-  return Math.max(
-    0,
-    Math.min(1, numeric)
-  );
-}
-
-function groupBestMatchesByCompany(matches) {
-  const map = new Map();
-
-  for (const match of matches) {
-    const company =
-      normalizeText(match.company) ||
-      "Unknown";
-
-    const existing =
-      map.get(company);
+    if (!companyMaterial) {
+      continue;
+    }
 
     if (
-      !existing ||
-      match.similarity >
-        existing.similarity
+      rejectedCompanyMaterialIds.has(
+        String(
+          companyMaterial.material_id
+        )
+      )
     ) {
-      map.set(company, match);
+      rejectedActualMaterialIds.add(
+        String(material.id)
+      );
     }
   }
 
-  return Array.from(
-    map.values()
-  ).sort(
+  return rejectedActualMaterialIds;
+}
+
+/* =========================================================
+   LOAD EXISTING EMBEDDINGS
+========================================================= */
+
+async function loadEmbeddings(
+  supabase
+) {
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("material_embeddings")
+    .select("*");
+
+  if (error) {
+    throw new Error(
+      `Failed to load material embeddings: ${error.message}`
+    );
+  }
+
+  return data || [];
+}
+
+/* =========================================================
+   FIND EMBEDDING COLUMN
+========================================================= */
+
+function getEmbeddingFromRow(
+  row
+) {
+  if (
+    Array.isArray(
+      row.embedding
+    )
+  ) {
+    return row.embedding;
+  }
+
+  if (
+    typeof row.embedding ===
+    "string"
+  ) {
+    try {
+      const parsed =
+        JSON.parse(
+          row.embedding
+        );
+
+      if (
+        Array.isArray(parsed)
+      ) {
+        return parsed;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+   CREATE / UPDATE EMBEDDING
+========================================================= */
+
+async function saveEmbedding(
+  supabase,
+  materialId,
+  embedding,
+  sourceText
+) {
+  /*
+   * Delete existing embedding first.
+   *
+   * This avoids duplicate rows when the material has
+   * already been embedded.
+   */
+
+  const {
+    error: deleteError,
+  } = await supabase
+    .from("material_embeddings")
+    .delete()
+    .eq(
+      "material_id",
+      materialId
+    );
+
+  if (deleteError) {
+    throw new Error(
+      `Failed to replace old embedding: ${deleteError.message}`
+    );
+  }
+
+  /*
+   * Try the normal embedding insert.
+   */
+
+  const {
+    error: insertError,
+  } = await supabase
+    .from("material_embeddings")
+    .insert({
+      material_id:
+        materialId,
+      embedding,
+      source_text:
+        sourceText,
+    });
+
+  if (insertError) {
+    /*
+     * Some versions of the table may not have
+     * source_text.
+     *
+     * Retry with only the required columns.
+     */
+
+    const {
+      error:
+        fallbackError,
+    } = await supabase
+      .from(
+        "material_embeddings"
+      )
+      .insert({
+        material_id:
+          materialId,
+        embedding,
+      });
+
+    if (fallbackError) {
+      throw new Error(
+        `Failed to save embedding: ${fallbackError.message}`
+      );
+    }
+  }
+}
+
+/* =========================================================
+   ENSURE EMBEDDINGS
+========================================================= */
+
+async function ensureEmbeddings(
+  supabase,
+  materials,
+  rejectedIds,
+  existingEmbeddings
+) {
+  const embeddingMap =
+    new Map();
+
+  for (
+    const row of
+      existingEmbeddings
+  ) {
+    const embedding =
+      getEmbeddingFromRow(
+        row
+      );
+
+    if (
+      embedding &&
+      row.material_id !==
+        null &&
+      row.material_id !==
+        undefined
+    ) {
+      embeddingMap.set(
+        String(
+          row.material_id
+        ),
+        embedding
+      );
+    }
+  }
+
+  const activeMaterials =
+    materials.filter(
+      (material) =>
+        !rejectedIds.has(
+          String(material.id)
+        )
+    );
+
+  /*
+   * Generate embeddings only when missing.
+   */
+
+  for (
+    const material of
+      activeMaterials
+  ) {
+    const key =
+      String(
+        material.id
+      );
+
+    if (
+      embeddingMap.has(
+        key
+      )
+    ) {
+      continue;
+    }
+
+    const sourceText =
+      buildMaterialText(
+        material
+      );
+
+    if (!sourceText) {
+      continue;
+    }
+
+    console.log(
+      "Creating embedding for material:",
+      material.id
+    );
+
+    const embedding =
+      await createEmbedding(
+        sourceText
+      );
+
+    await saveEmbedding(
+      supabase,
+      material.id,
+      embedding,
+      sourceText
+    );
+
+    embeddingMap.set(
+      key,
+      embedding
+    );
+  }
+
+  return embeddingMap;
+}
+
+/* =========================================================
+   BUILD STANDARD CODE
+========================================================= */
+
+function buildStandardCode(
+  partName,
+  bestMatches
+) {
+  const cleanName =
+    normalizeText(
+      partName
+    )
+      .replace(
+        /[^a-z0-9]+/g,
+        "-"
+      )
+      .replace(
+        /^-+|-+$/g,
+        ""
+      )
+      .slice(0, 30);
+
+  const companyCodes =
+    bestMatches
+      .map(
+        (match) =>
+          `${match.company}:${match.material_number}`
+      )
+      .join("|");
+
+  /*
+   * Simple deterministic hash.
+   */
+
+  let hash = 0;
+
+  const text =
+    `${cleanName}|${companyCodes}`;
+
+  for (
+    let i = 0;
+    i < text.length;
+    i++
+  ) {
+    hash =
+      (hash << 5) -
+      hash +
+      text.charCodeAt(i);
+
+    hash |= 0;
+  }
+
+  const positiveHash =
+    Math.abs(hash);
+
+  const hashPart =
+    positiveHash
+      .toString(36)
+      .toUpperCase()
+      .slice(0, 8);
+
+  return `BM-${hashPart}`;
+}
+
+/* =========================================================
+   GROUP BEST MATCHES BY COMPANY
+========================================================= */
+
+function groupBestMatchesByCompany(
+  matches
+) {
+  const groups =
+    new Map();
+
+  for (
+    const match of
+      matches
+  ) {
+    const companyKey =
+      normalizeText(
+        match.company
+      );
+
+    if (!companyKey) {
+      continue;
+    }
+
+    if (
+      !groups.has(
+        companyKey
+      )
+    ) {
+      groups.set(
+        companyKey,
+        []
+      );
+    }
+
+    groups
+      .get(companyKey)
+      .push(match);
+  }
+
+  /*
+   * Only the best result from each company is needed
+   * for the Government approval queue.
+   */
+
+  const best = [];
+
+  for (
+    const companyMatches of
+      groups.values()
+  ) {
+    companyMatches.sort(
+      (a, b) =>
+        b.similarity -
+        a.similarity
+    );
+
+    best.push(
+      companyMatches[0]
+    );
+  }
+
+  best.sort(
     (a, b) =>
       b.similarity -
       a.similarity
   );
+
+  return best;
 }
 
 /* =========================================================
-   BMG / AI STANDARD CODE
-   ========================================================= */
+   CREATE APPROVAL QUEUE
+========================================================= */
 
-function buildStandardCode({
-  sourceMaterial,
-  approvedCandidates,
-}) {
-  /*
-   * IMPORTANT:
-   * Company names and company material numbers are deliberately
-   * NOT used to generate the common code.
-   *
-   * This lets IOCL/BPCL/HPCL/BHEL records that describe the
-   * same physical/technical item share one BMG code.
-   */
-
-  const semanticIdentity = [
-    normalizeText(
-      sourceMaterial.description
-    ).toUpperCase(),
-
-    normalizeText(
-      sourceMaterial.category
-    ).toUpperCase(),
-
-    normalizeText(
-      sourceMaterial.specifications
-    ).toUpperCase(),
-
-    ...approvedCandidates
-      .map(
-        (candidate) =>
-          [
-            normalizeText(
-              candidate.description
-            ).toUpperCase(),
-
-            normalizeText(
-              candidate.category
-            ).toUpperCase(),
-
-            normalizeText(
-              candidate.specifications
-            ).toUpperCase(),
-          ].join("|")
-      )
-      .sort(),
-  ]
-    .filter(Boolean)
-    .join("||");
-
-  const hash =
-    crypto
-      .createHash("sha256")
-      .update(semanticIdentity)
-      .digest("hex")
-      .slice(0, 10)
-      .toUpperCase();
-
-  return `BMG-${hash}`;
-}
-
-/* =========================================================
-   CREATE AI CODE APPROVAL QUEUE
-   ========================================================= */
-
-async function createApprovalQueue({
+async function createApprovalQueue(
   supabase,
-  sourceMaterial,
-  matches,
-  sourceCompany,
-}) {
-  const bestMatches =
-    groupBestMatchesByCompany(
-      matches
-    );
-
-  /*
-   * We only create approval records for:
-   *
-   * 1. Another company
-   * 2. Similarity >= 85%
-   *
-   * The source company's own material is excluded because
-   * we are trying to harmonize codes across companies.
-   */
-
-  const approvalCandidates =
+  partName,
+  bestMatches
+) {
+  const eligible =
     bestMatches.filter(
       (match) =>
-        match.material_id &&
         match.similarity >=
-          APPROVAL_SIMILARITY_THRESHOLD &&
-        normalizeCompany(
-          match.company
-        ) !==
-          normalizeCompany(
-            sourceCompany
-          )
+        APPROVAL_THRESHOLD
     );
 
   if (
-    approvalCandidates.length ===
-    0
+    eligible.length === 0
   ) {
-    return {
-      created: [],
-      skipped: [],
-      standardCode: null,
-    };
+    return [];
   }
 
   const standardCode =
-    buildStandardCode({
-      sourceMaterial,
-      approvedCandidates:
-        approvalCandidates,
-    });
-
-  const materialIds =
-    approvalCandidates
-      .map(
-        (candidate) =>
-          Number(candidate.material_id)
-      )
-      .filter(
-        (id) =>
-          Number.isInteger(id) &&
-          id > 0
-      );
-
-  /*
-   * Prevent duplicate pending/approved requests
-   * for the same material.
-   */
-
-  const {
-    data: existingApprovals,
-    error: existingError,
-  } = await supabase
-    .from("ai_code_approvals")
-    .select(
-      `
-      id,
-      company_material_id,
-      ai_standard_code,
-      approval_status
-      `
-    )
-    .in(
-      "company_material_id",
-      materialIds
+    buildStandardCode(
+      partName,
+      eligible
     );
 
-  if (existingError) {
-    throw new Error(
-      `Failed to inspect existing AI approvals: ${existingError.message}`
-    );
-  }
-
-  const existingByMaterial =
-    new Map();
+  const inserted =
+    [];
 
   for (
-    const approval of
-      existingApprovals || []
+    const match of
+      eligible
   ) {
-    existingByMaterial.set(
-      Number(
-        approval.company_material_id
-      ),
-      approval
-    );
-  }
-
-  const rowsToInsert = [];
-
-  const skipped = [];
-
-  for (
-    const candidate of
-      approvalCandidates
-  ) {
-    const materialId =
-      Number(
-        candidate.material_id
-      );
-
-    const existing =
-      existingByMaterial.get(
-        materialId
-      );
-
     /*
-     * Already pending or approved:
-     * don't create duplicate queue entries.
+     * CRITICAL:
+     *
+     * match.material_id is materials.id.
+     *
+     * We must NOT insert that value into
+     * ai_code_approvals.company_material_id.
+     *
+     * match.company_material_id is the actual
+     * company_materials.material_id.
      */
 
     if (
-      existing &&
-      (
-        existing.approval_status ===
-          "PENDING" ||
-        existing.approval_status ===
-          "APPROVED"
-      )
+      match.company_material_id ===
+        null ||
+      match.company_material_id ===
+        undefined
     ) {
-      skipped.push({
-        material_id:
-          materialId,
-
-        company:
-          candidate.company,
-
-        reason:
-          `Existing ${existing.approval_status.toLowerCase()} approval`,
-      });
+      console.warn(
+        "Skipping approval because company_material_id could not be resolved:",
+        match.material_id
+      );
 
       continue;
     }
 
-    rowsToInsert.push({
-      company_name:
-        candidate.company,
+    const {
+      data: existing,
+      error:
+        existingError,
+    } = await supabase
+      .from("ai_code_approvals")
+      .select("id, approval_status")
+      .eq(
+        "company_material_id",
+        match.company_material_id
+      )
+      .eq(
+        "approval_status",
+        "PENDING"
+      )
+      .maybeSingle();
 
-      company_material_id:
-        materialId,
+    if (
+      existingError
+    ) {
+      console.warn(
+        "Existing approval lookup failed:",
+        existingError
+      );
+    }
 
-      part_name:
-        candidate.description ||
-        sourceMaterial.description ||
-        "Unnamed material",
+    /*
+     * Do not create duplicate pending approval records.
+     */
 
-      company_material_code:
-        candidate.material_number,
+    if (existing) {
+      inserted.push(
+        existing
+      );
+      continue;
+    }
 
-      ai_standard_code:
-        standardCode,
+    const {
+      data,
+      error,
+    } = await supabase
+      .from("ai_code_approvals")
+      .insert({
+        company_name:
+          match.company,
 
-      ai_confidence:
-        Number(
-          (
-            candidate.similarity *
-            100
-          ).toFixed(2)
-        ),
+        company_material_id:
+          match.company_material_id,
 
-      approval_status:
-        "PENDING",
+        part_name:
+          partName,
 
-      email_status:
-        "NOT_SENT",
+        company_material_code:
+          match.material_number,
 
-      rejection_reason:
-        null,
+        ai_standard_code:
+          standardCode,
 
-      approved_by:
-        null,
+        ai_confidence:
+          match.similarity,
 
-      approved_at:
-        null,
+        approval_status:
+          "PENDING",
 
-      rejected_by:
-        null,
+        company_email:
+          match.company_email ||
+          null,
 
-      rejected_at:
-        null,
-    });
-  }
+        email_status:
+          "NOT_SENT",
+      })
+      .select("*")
+      .single();
 
-  if (
-    rowsToInsert.length ===
-    0
-  ) {
-    return {
-      created: [],
-      skipped,
-      standardCode,
-    };
-  }
+    if (error) {
+      console.error(
+        "APPROVAL INSERT ERROR:",
+        error
+      );
 
-  const {
-    data: createdRows,
-    error: insertError,
-  } = await supabase
-    .from("ai_code_approvals")
-    .insert(
-      rowsToInsert
-    )
-    .select(
-      `
-      id,
-      company_name,
-      company_material_id,
-      part_name,
-      company_material_code,
-      ai_standard_code,
-      ai_confidence,
-      approval_status,
-      email_status
-      `
+      throw new Error(
+        `Failed to create approval queue record: ${error.message}`
+      );
+    }
+
+    inserted.push(
+      data
     );
-
-  if (insertError) {
-    throw new Error(
-      `Failed to create AI approval records: ${insertError.message}`
-    );
   }
 
-  return {
-    created:
-      createdRows || [],
-
-    skipped,
-
-    standardCode,
-  };
+  return inserted;
 }
+
+/* =========================================================
+   FIND COMPANY EMAIL
+========================================================= */
+
+function findCompanyEmail(
+  material,
+  companyMaterials
+) {
+  const companyMaterial =
+    findCompanyMaterialForMaterial(
+      material,
+      companyMaterials
+    );
+
+  if (!companyMaterial) {
+    return null;
+  }
+
+  return (
+    companyMaterial.company_email ||
+    companyMaterial.email ||
+    null
+  );
+}
+
+/* =========================================================
+   POST
+========================================================= */
 
 export async function POST(
   request
 ) {
   try {
+    if (
+      !SUPABASE_URL ||
+      !SUPABASE_SERVICE_ROLE_KEY
+    ) {
+      return json(
+        {
+          success: false,
+          error:
+            "Supabase server configuration is missing.",
+        },
+        500
+      );
+    }
+
+    if (!GEMINI_API_KEY) {
+      return json(
+        {
+          success: false,
+          error:
+            "Gemini API key is missing.",
+        },
+        500
+      );
+    }
+
+    const body =
+      await request.json();
+
+    /*
+     * -------------------------------------------------------
+     * INPUT
+     * -------------------------------------------------------
+     *
+     * Supported:
+     *
+     * {
+     *   materialId: 4,
+     *   matchCount: 10
+     * }
+     *
+     * OR:
+     *
+     * {
+     *   partName: "O-ring",
+     *   specifications: "..."
+     * }
+     */
+
+    const materialId =
+      body.materialId ??
+      null;
+
+    const requestedPartName =
+      String(
+        body.partName ||
+          body.part_name ||
+          ""
+      ).trim();
+
+    const requestedSpecifications =
+      String(
+        body.specifications ||
+          body.specification ||
+          ""
+      ).trim();
+
+    const matchCount =
+      Math.max(
+        1,
+        Math.min(
+          Number(
+            body.matchCount ||
+              body.match_count ||
+              10
+          ),
+          50
+        )
+      );
+
     const supabase =
       getSupabase();
 
-    const body =
-      await request
-        .json()
-        .catch(() => ({}));
+    /*
+     * -------------------------------------------------------
+     * LOAD DATABASE
+     * -------------------------------------------------------
+     */
 
-    const rawMaterialId =
-      body?.materialId;
+    const materials =
+      await loadMaterials(
+        supabase
+      );
 
-    const materialId =
-      rawMaterialId !==
-        undefined &&
-      rawMaterialId !==
-        null &&
-      String(
-        rawMaterialId
-      ).trim() !== ""
-        ? Number(
-            rawMaterialId
+    const companyMaterials =
+      await loadCompanyMaterials(
+        supabase
+      );
+
+    /*
+     * -------------------------------------------------------
+     * FILTER REJECTED MATERIALS
+     * -------------------------------------------------------
+     */
+
+    const rejectedIds =
+      await getRejectedMaterialIds(
+        supabase,
+        materials,
+        companyMaterials
+      );
+
+    const activeMaterials =
+      materials.filter(
+        (material) =>
+          !rejectedIds.has(
+            String(material.id)
           )
-        : null;
-
-    const matchCount =
-      body?.matchCount !==
-      undefined
-        ? Number(
-            body.matchCount
-          )
-        : 10;
-
-    const company =
-      normalizeText(
-        body?.company
-      );
-
-    const materialNumber =
-      normalizeText(
-        body?.materialNumber
-      );
-
-    const description =
-      normalizeText(
-        body?.description
-      );
-
-    const specifications =
-      normalizeText(
-        body?.specifications
-      );
-
-    const category =
-      normalizeText(
-        body?.category
       );
 
     if (
-      !Number.isInteger(
-        matchCount
-      ) ||
-      matchCount < 1 ||
-      matchCount > MAX_MATCHES
+      activeMaterials.length ===
+      0
     ) {
-      return NextResponse.json(
+      return json(
         {
           success: false,
           error:
-            `matchCount must be between 1 and ${MAX_MATCHES}.`,
+            "No active materials are available for semantic search.",
         },
-        {
-          status: 400,
-        }
+        404
       );
     }
 
-    const usingMaterial =
-      Number.isInteger(
-        materialId
-      ) &&
-      materialId > 0;
+    /*
+     * -------------------------------------------------------
+     * LOAD / GENERATE EMBEDDINGS
+     * -------------------------------------------------------
+     */
 
-    const usingQuery =
-      Boolean(
-        company ||
-          materialNumber ||
-          description ||
-          specifications ||
-          category
+    const existingEmbeddings =
+      await loadEmbeddings(
+        supabase
       );
 
-    if (
-      !usingMaterial &&
-      !usingQuery
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Provide a materialId or a material/specification query.",
-        },
-        {
-          status: 400,
-        }
+    const embeddingMap =
+      await ensureEmbeddings(
+        supabase,
+        activeMaterials,
+        rejectedIds,
+        existingEmbeddings
       );
-    }
 
-    /* =====================================================
-       SOURCE
-    ===================================================== */
+    /*
+     * -------------------------------------------------------
+     * DETERMINE QUERY
+     * -------------------------------------------------------
+     */
+
+    let queryText =
+      requestedPartName;
 
     let sourceMaterial =
       null;
 
-    let sourceEmbedding =
-      null;
-
-    let excludeMaterialId =
-      null;
-
-    let sourceSearchText =
-      "";
-
-    /* =====================================================
-       MODE 1:
-       EXISTING MATERIAL
-    ===================================================== */
-
-    if (usingMaterial) {
-      const {
-        data: material,
-        error:
-          materialError,
-      } =
-        await supabase
-          .from("materials")
-          .select(
-            `
-            id,
-            company,
-            material_number,
-            description,
-            specifications,
-            category
-            `
-          )
-          .eq(
-            "id",
-            materialId
-          )
-          .single();
+    if (
+      materialId !== null
+    ) {
+      sourceMaterial =
+        activeMaterials.find(
+          (material) =>
+            String(
+              material.id
+            ) ===
+            String(
+              materialId
+            )
+        );
 
       if (
-        materialError ||
-        !material
+        !sourceMaterial
       ) {
-        return NextResponse.json(
+        return json(
           {
             success: false,
             error:
-              "Source material not found.",
-
-            material_id:
-              materialId,
-
-            details:
-              materialError?.message ||
-              null,
+              "The requested material does not exist or has been rejected.",
           },
-          {
-            status: 404,
-          }
+          404
         );
       }
 
-      sourceMaterial =
-        material;
-
-      excludeMaterialId =
-        material.id;
-
-      /*
-       * First try stored embedding.
-       */
-
-      const {
-        data:
-          storedEmbedding,
-      } =
-        await supabase
-          .from(
-            "material_embeddings"
-          )
-          .select(
-            `
-            material_id,
-            embedding,
-            search_text
-            `
-          )
-          .eq(
-            "material_id",
-            material.id
-          )
-          .maybeSingle();
-
-      if (
-        storedEmbedding &&
-        Array.isArray(
-          storedEmbedding.embedding
-        ) &&
-        storedEmbedding.embedding.length ===
-          EMBEDDING_DIMENSIONS
-      ) {
-        sourceEmbedding =
-          storedEmbedding.embedding;
-
-        sourceSearchText =
-          storedEmbedding.search_text ||
-          buildMaterialSearchText(
-            material
-          );
-      }
-
-      /*
-       * Generate one if missing.
-       */
-
-      if (
-        !sourceEmbedding
-      ) {
-        sourceSearchText =
-          buildMaterialSearchText(
-            material
-          );
-
-        if (
-          !sourceSearchText
-        ) {
-          throw new Error(
-            "Source material contains no searchable information."
-          );
-        }
-
-        sourceEmbedding =
-          await generateEmbedding(
-            sourceSearchText
-          );
-
-        const {
-          error:
-            embeddingSaveError,
-        } =
-          await supabase
-            .from(
-              "material_embeddings"
-            )
-            .upsert(
-              {
-                material_id:
-                  material.id,
-
-                embedding:
-                  sourceEmbedding,
-
-                search_text:
-                  sourceSearchText,
-
-                updated_at:
-                  new Date().toISOString(),
-              },
-              {
-                onConflict:
-                  "material_id",
-              }
-            );
-
-        if (
-          embeddingSaveError
-        ) {
-          throw new Error(
-            `Failed to store source embedding: ${embeddingSaveError.message}`
-          );
-        }
-      }
+      queryText =
+        buildMaterialText(
+          sourceMaterial
+        );
+    } else if (
+      requestedSpecifications
+    ) {
+      queryText =
+        `${requestedPartName} | ${requestedSpecifications}`;
     }
 
-    /* =====================================================
-       MODE 2:
-       DIRECT QUERY
-    ===================================================== */
-
-    else {
-      sourceSearchText =
-        buildQuerySearchText({
-          company,
-          materialNumber,
-          description,
-          specifications,
-          category,
-        });
-
-      if (
-        !sourceSearchText
-      ) {
-        throw new Error(
-          "Query contains no searchable information."
-        );
-      }
-
-      sourceEmbedding =
-        await generateEmbedding(
-          sourceSearchText
-        );
-
-      sourceMaterial = {
-        id: null,
-
-        company:
-          company || null,
-
-        material_number:
-          materialNumber || null,
-
-        description:
-          description || null,
-
-        specifications:
-          specifications || null,
-
-        category:
-          category || null,
-      };
-    }
-
-    /* =====================================================
-       VECTOR SEARCH
-    ===================================================== */
-
-    const {
-      data: rawMatches,
-      error:
-        matchError,
-    } =
-      await supabase.rpc(
-        "match_materials",
+    if (!queryText) {
+      return json(
         {
-          query_embedding:
-            sourceEmbedding,
-
-          match_count:
-            matchCount,
-
-          exclude_material_id:
-            excludeMaterialId,
-        }
-      );
-
-    if (
-      matchError
-    ) {
-      throw new Error(
-        `Vector search failed: ${matchError.message}`
+          success: false,
+          error:
+            "A materialId, partName, or search text is required.",
+        },
+        400
       );
     }
 
-    const vectorMatches =
-      Array.isArray(
-        rawMatches
-      )
-        ? rawMatches
-        : [];
+    /*
+     * -------------------------------------------------------
+     * QUERY EMBEDDING
+     * -------------------------------------------------------
+     */
 
-    const matchIds =
-      vectorMatches
-        .map(
-          (row) =>
-            Number(
-              row.material_id
-            )
-        )
-        .filter(
-          (id) =>
-            Number.isInteger(
-              id
-            ) &&
-            id > 0
-        );
+    const queryEmbedding =
+      await createEmbedding(
+        queryText
+      );
 
-    /* =====================================================
-       LOAD MATCHED MATERIAL DATA
-    ===================================================== */
+    /*
+     * -------------------------------------------------------
+     * SEMANTIC MATCHING
+     * -------------------------------------------------------
+     */
 
-    let matchedMaterials =
+    const matches =
       [];
-
-    if (
-      matchIds.length >
-      0
-    ) {
-      const {
-        data,
-        error,
-      } =
-        await supabase
-          .from("materials")
-          .select(
-            `
-            id,
-            company,
-            material_number,
-            description,
-            specifications,
-            category
-            `
-          )
-          .in(
-            "id",
-            matchIds
-          );
-
-      if (error) {
-        throw new Error(
-          `Failed to load matched materials: ${error.message}`
-        );
-      }
-
-      matchedMaterials =
-        data || [];
-    }
-
-    const materialMap =
-      new Map();
 
     for (
       const material of
-        matchedMaterials
+        activeMaterials
     ) {
-      materialMap.set(
-        Number(material.id),
-        material
-      );
-    }
+      const embedding =
+        embeddingMap.get(
+          String(
+            material.id
+          )
+        );
 
-    /* =====================================================
-       FORMAT RESULTS
-    ===================================================== */
+      if (
+        !embedding
+      ) {
+        continue;
+      }
 
-    const matches =
-      vectorMatches.map(
-        (row, index) => {
-          const id =
-            Number(
-              row.material_id
-            );
+      const similarity =
+        cosineSimilarity(
+          queryEmbedding,
+          embedding
+        );
 
-          const material =
-            materialMap.get(
-              id
-            );
+      const companyMaterial =
+        findCompanyMaterialForMaterial(
+          material,
+          companyMaterials
+        );
 
-          const similarity =
-            normalizeSimilarity(
-              row.similarity ??
-                row.score
-            );
+      const companyEmail =
+        findCompanyEmail(
+          material,
+          companyMaterials
+        );
 
-          return {
-            rank:
-              index + 1,
-
-            material_id:
-              id,
-
-            company:
-              material?.company ||
-              null,
-
-            material_number:
-              material?.material_number ||
-              null,
-
-            description:
-              material?.description ||
-              null,
-
-            specifications:
-              material?.specifications ||
-              null,
-
-            category:
-              material?.category ||
-              null,
-
-            similarity,
-
-            similarity_percent:
-              Number(
-                (
-                  similarity *
-                  100
-                ).toFixed(2)
-              ),
-
-            recommendation:
-              similarity >= 0.85
-                ? "LIKELY_MATCH"
-                : similarity >= 0.65
-                  ? "REVIEW"
-                  : "LOW_CONFIDENCE",
-          };
-        }
-      );
-
-    /* =====================================================
-       COMPANY BEST MATCHES
-    ===================================================== */
-
-    const bestMatchByCompany =
-      groupBestMatchesByCompany(
-        matches
-      );
-
-    /* =====================================================
-       CREATE AI CODE APPROVALS
-    ===================================================== */
-
-    let approvalQueue = {
-      created: [],
-      skipped: [],
-      standardCode: null,
-    };
-
-    try {
-      approvalQueue =
-        await createApprovalQueue({
-          supabase,
-
-          sourceMaterial,
-
-          matches,
-
-          sourceCompany:
-            sourceMaterial.company ||
-            company ||
-            "",
-        });
-    } catch (approvalError) {
-      /*
-       * AI matching itself should not fail just because
-       * the approval queue has a database problem.
-       *
-       * The error is returned so it is visible during testing.
-       */
-
-      console.error(
-        "AI approval queue error:",
-        approvalError
-      );
-
-      approvalQueue = {
-        created: [],
-        skipped: [],
-
-        standardCode: null,
-
-        error:
-          approvalError instanceof Error
-            ? approvalError.message
-            : String(
-                approvalError
-              ),
-      };
-    }
-
-    /* =====================================================
-       ALL IMPORTANT COMPANIES
-    ===================================================== */
-
-    const knownCompanies = [
-      "IOCL",
-      "BPCL",
-      "HPCL",
-      "BHEL",
-      "ONGC",
-      "NTPC",
-      "SAIL",
-      "GAIL",
-      "CIL",
-      "CPCL",
-    ];
-
-    const companyMatchMap =
-      new Map(
-        bestMatchByCompany.map(
-          (match) => [
-            normalizeCompany(
-              match.company
-            ),
-            match,
-          ]
-        )
-      );
-
-    const companyResults =
-      knownCompanies.map(
-        (companyName) => {
-          const match =
-            companyMatchMap.get(
-              companyName
-            );
-
-          if (match) {
-            return match;
-          }
-
-          return {
-            rank: null,
-
-            material_id:
-              null,
-
-            company:
-              companyName,
-
-            material_number:
-              null,
-
-            description:
-              null,
-
-            specifications:
-              null,
-
-            category:
-              null,
-
-            similarity:
-              0,
-
-            similarity_percent:
-              0,
-
-            recommendation:
-              "NO_MATCH",
-          };
-        }
-      );
-
-    return NextResponse.json({
-      success: true,
-
-      mode:
-        usingMaterial
-          ? "MATERIAL"
-          : "QUERY",
-
-      query: {
+      matches.push({
         material_id:
-          sourceMaterial.id,
+          material.id,
+
+        company_material_id:
+          companyMaterial
+            ?.material_id ??
+          null,
 
         company:
-          sourceMaterial.company,
+          material.company,
+
+        company_id:
+          material.company_id,
 
         material_number:
-          sourceMaterial.material_number,
+          material.material_number,
 
         description:
-          sourceMaterial.description,
-
-        category:
-          sourceMaterial.category,
+          material.description,
 
         specifications:
-          sourceMaterial.specifications,
+          material.specifications,
 
-        search_text:
-          sourceSearchText,
-      },
+        category:
+          material.category,
 
-      embedding: {
-        model:
+        similarity,
+
+        confidence:
+          Math.round(
+            similarity * 10000
+          ) / 100,
+
+        company_email:
+          companyEmail,
+      });
+    }
+
+    /*
+     * Highest similarity first.
+     */
+
+    matches.sort(
+      (a, b) =>
+        b.similarity -
+        a.similarity
+    );
+
+    const topMatches =
+      matches.slice(
+        0,
+        matchCount
+      );
+
+    /*
+     * -------------------------------------------------------
+     * BEST MATCH PER COMPANY
+     * -------------------------------------------------------
+     */
+
+    const bestMatches =
+      groupBestMatchesByCompany(
+        topMatches
+      );
+
+    /*
+     * -------------------------------------------------------
+     * CREATE GOVERNMENT APPROVAL QUEUE
+     * -------------------------------------------------------
+     */
+
+    let approvalQueue =
+      [];
+
+    if (
+      sourceMaterial
+    ) {
+      approvalQueue =
+        await createApprovalQueue(
+          supabase,
+          sourceMaterial.description ||
+            sourceMaterial.material_number ||
+            requestedPartName,
+          bestMatches
+        );
+    } else {
+      approvalQueue =
+        await createApprovalQueue(
+          supabase,
+          requestedPartName,
+          bestMatches
+        );
+    }
+
+    /*
+     * -------------------------------------------------------
+     * RESPONSE
+     * -------------------------------------------------------
+     */
+
+    return json(
+      {
+        success: true,
+
+        query: {
+          materialId:
+            materialId,
+
+          text:
+            queryText,
+        },
+
+        totalActiveMaterials:
+          activeMaterials.length,
+
+        totalMatches:
+          matches.length,
+
+        matches:
+          topMatches.map(
+            (match) => ({
+              ...match,
+
+              similarity:
+                Math.round(
+                  match.similarity *
+                    10000
+                ) /
+                100,
+
+              similarityPercent:
+                Math.round(
+                  match.similarity *
+                    100
+                ),
+            })
+          ),
+
+        bestMatches:
+          bestMatches.map(
+            (match) => ({
+              ...match,
+
+              similarity:
+                Math.round(
+                  match.similarity *
+                    10000
+                ) /
+                100,
+
+              similarityPercent:
+                Math.round(
+                  match.similarity *
+                    100
+                ),
+            })
+          ),
+
+        approvalQueue,
+
+        approvalThreshold:
+          APPROVAL_THRESHOLD,
+
+        embeddingModel:
           EMBEDDING_MODEL,
 
-        dimensions:
+        embeddingDimensions:
           EMBEDDING_DIMENSIONS,
-
-        generated:
-          true,
       },
-
-      count:
-        matches.length,
-
-      matches,
-
-      best_match_by_company:
-        bestMatchByCompany,
-
-      company_results:
-        companyResults,
-
-      /* =================================================
-         AI CODE APPROVAL INFORMATION
-      ================================================= */
-
-      ai_code_assignment: {
-        standard_code:
-          approvalQueue.standardCode,
-
-        approval_threshold:
-          APPROVAL_SIMILARITY_THRESHOLD,
-
-        created_count:
-          approvalQueue.created
-            ?.length || 0,
-
-        skipped_count:
-          approvalQueue.skipped
-            ?.length || 0,
-
-        created:
-          approvalQueue.created ||
-          [],
-
-        skipped:
-          approvalQueue.skipped ||
-          [],
-
-        error:
-          approvalQueue.error ||
-          null,
-      },
-    });
+      200
+    );
   } catch (error) {
     console.error(
-      "Semantic search error:",
+      "SEMANTIC SEARCH ERROR:",
       error
     );
 
-    return NextResponse.json(
+    return json(
       {
         success: false,
-
         error:
+          error?.message ||
           "Semantic search failed.",
-
-        details:
-          error instanceof Error
-            ? error.message
-            : String(error),
       },
+      500
+    );
+  }
+}
+
+/* =========================================================
+   GET
+========================================================= */
+
+export async function GET(
+  request
+) {
+  try {
+    const url =
+      new URL(
+        request.url
+      );
+
+    const materialId =
+      url.searchParams.get(
+        "materialId"
+      );
+
+    const matchCount =
+      Number(
+        url.searchParams.get(
+          "matchCount"
+        ) || 10
+      );
+
+    /*
+     * Convert GET into the same semantic-search
+     * implementation used by POST.
+     */
+
+    const fakeRequest =
+      new Request(
+        request.url,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            materialId:
+              materialId
+                ? Number(
+                    materialId
+                  )
+                : null,
+
+            matchCount,
+          }),
+        }
+      );
+
+    return POST(
+      fakeRequest
+    );
+  } catch (error) {
+    console.error(
+      "SEMANTIC SEARCH GET ERROR:",
+      error
+    );
+
+    return json(
       {
-        status: 500,
-      }
+        success: false,
+        error:
+          error?.message ||
+          "Semantic search failed.",
+      },
+      500
     );
   }
 }

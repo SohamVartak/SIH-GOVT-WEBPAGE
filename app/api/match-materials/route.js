@@ -669,10 +669,6 @@ function calculateEngineeringScore(
     temperatureScore * 0.02 +
     standardScore * 0.04;
 
-  /*
-   * Strongly penalize known product-family
-   * conflicts.
-   */
   if (
     sourceProductFamily &&
     candidateProductFamily &&
@@ -861,37 +857,33 @@ async function loadMaterialAttributes(
           chunkSize
       );
 
-    /*
-     * These are the columns confirmed
-     * to exist in your material_attributes
-     * table.
-     */
     const {
       data,
       error,
-    } = await supabase
-      .from(
-        "material_attributes"
-      )
-      .select(
-        [
+    } =
+      await supabase
+        .from(
+          "material_attributes"
+        )
+        .select(
+          [
+            "material_id",
+            "material_family",
+            "dimensions",
+            "material_grade",
+            "pressure_rating",
+            "temperature_rating",
+            "standards",
+            "manufacturer",
+            "model",
+            "design_features",
+            "other_attributes",
+          ].join(",")
+        )
+        .in(
           "material_id",
-          "material_family",
-          "dimensions",
-          "material_grade",
-          "pressure_rating",
-          "temperature_rating",
-          "standards",
-          "manufacturer",
-          "model",
-          "design_features",
-          "other_attributes",
-        ].join(",")
-      )
-      .in(
-        "material_id",
-        chunk
-      );
+          chunk
+        );
 
     if (error) {
       throw new Error(
@@ -963,18 +955,19 @@ async function getSourceEmbedding(
     data: existing,
     error:
       existingError,
-  } = await supabase
-    .from(
-      "material_embeddings"
-    )
-    .select(
-      "material_id, embedding"
-    )
-    .eq(
-      "material_id",
-      source.id
-    )
-    .maybeSingle();
+  } =
+    await supabase
+      .from(
+        "material_embeddings"
+      )
+      .select(
+        "material_id, embedding"
+      )
+      .eq(
+        "material_id",
+        source.id
+      )
+      .maybeSingle();
 
   if (existingError) {
     throw new Error(
@@ -1019,28 +1012,29 @@ async function getSourceEmbedding(
 
   const {
     error: saveError,
-  } = await supabase
-    .from(
-      "material_embeddings"
-    )
-    .upsert(
-      {
-        material_id:
-          source.id,
+  } =
+    await supabase
+      .from(
+        "material_embeddings"
+      )
+      .upsert(
+        {
+          material_id:
+            source.id,
 
-        embedding,
+          embedding,
 
-        search_text:
-          engineeringText,
+          search_text:
+            engineeringText,
 
-        updated_at:
-          new Date().toISOString(),
-      },
-      {
-        onConflict:
-          "material_id",
-      }
-    );
+          updated_at:
+            new Date().toISOString(),
+        },
+        {
+          onConflict:
+            "material_id",
+        }
+      );
 
   if (saveError) {
     throw new Error(
@@ -1158,10 +1152,6 @@ function selectHybridCandidates(
 
   const combined = [];
 
-  /* ----------------------------------------------------------
-     VECTOR CANDIDATES
-  ---------------------------------------------------------- */
-
   for (
     const candidate of
       vectorCandidates
@@ -1222,10 +1212,6 @@ function selectHybridCandidates(
     });
   }
 
-  /* ----------------------------------------------------------
-     LEXICAL FALLBACK
-  ---------------------------------------------------------- */
-
   for (
     const material of
       allMaterials
@@ -1269,10 +1255,6 @@ function selectHybridCandidates(
         detail
       );
 
-    /*
-     * Only allow meaningful fallback
-     * candidates.
-     */
     if (
       engineering.engineeringScore <
       8
@@ -1308,10 +1290,6 @@ function selectHybridCandidates(
       b.hybridScore -
       a.hybridScore
   );
-
-  /* ----------------------------------------------------------
-     COMPANY DIVERSITY
-  ---------------------------------------------------------- */
 
   const companyCounts =
     new Map();
@@ -1795,18 +1773,19 @@ async function getOrCreateNCS(
     const {
       data,
       error,
-    } = await supabase
-      .from(
-        "ncs_materials"
-      )
-      .select(
-        "ncs_id, ncs_code, ncs_name, status"
-      )
-      .eq(
-        "ncs_id",
-        existingNCSId
-      )
-      .single();
+    } =
+      await supabase
+        .from(
+          "ncs_materials"
+        )
+        .select(
+          "ncs_id, ncs_code, ncs_name, status"
+        )
+        .eq(
+          "ncs_id",
+          existingNCSId
+        )
+        .single();
 
     if (error) {
       throw new Error(
@@ -1831,37 +1810,38 @@ async function getOrCreateNCS(
     const {
       data,
       error,
-    } = await supabase
-      .from(
-        "ncs_materials"
-      )
-      .insert({
-        ncs_code:
-          ncsCode,
+    } =
+      await supabase
+        .from(
+          "ncs_materials"
+        )
+        .insert({
+          ncs_code:
+            ncsCode,
 
-        ncs_name:
-          commonMaterialName ||
-          sourceMaterial.description ||
-          "Unclassified Material",
+          ncs_name:
+            commonMaterialName ||
+            sourceMaterial.description ||
+            "Unclassified Material",
 
-        category:
-          sourceMaterial.category ||
-          null,
+          category:
+            sourceMaterial.category ||
+            null,
 
-        subcategory:
-          null,
+          subcategory:
+            null,
 
-        standard_specification:
-          sourceMaterial.specifications ||
-          null,
+          standard_specification:
+            sourceMaterial.specifications ||
+            null,
 
-        status:
-          "PROPOSED",
-      })
-      .select(
-        "ncs_id, ncs_code, ncs_name, status"
-      )
-      .single();
+          status:
+            "PROPOSED",
+        })
+        .select(
+          "ncs_id, ncs_code, ncs_name, status"
+        )
+        .single();
 
     if (
       !error &&
@@ -1947,21 +1927,22 @@ async function saveMappings(
   const {
     data,
     error,
-  } = await supabase
-    .from(
-      "material_ncs_mapping"
-    )
-    .upsert(
-      rows,
-      {
-        onConflict:
-          "material_id,ncs_id",
+  } =
+    await supabase
+      .from(
+        "material_ncs_mapping"
+      )
+      .upsert(
+        rows,
+        {
+          onConflict:
+            "material_id,ncs_id",
 
-        ignoreDuplicates:
-          false,
-      }
-    )
-    .select();
+          ignoreDuplicates:
+            false,
+        }
+      )
+      .select();
 
   if (error) {
     throw new Error(
@@ -1973,6 +1954,676 @@ async function saveMappings(
 }
 
 /* ============================================================
+   FIND COMPANY MATERIAL
+============================================================ */
+
+async function findCompanyMaterial(
+  supabase,
+  source
+) {
+  const companyCode =
+    String(
+      source.material_number ||
+        ""
+    ).trim();
+
+  const companyId =
+    source.company_id
+      ? Number(
+          source.company_id
+        )
+      : null;
+
+  /*
+    IMPORTANT:
+
+    company_materials.material_id is the ID of the
+    company_materials row.
+
+    It is NOT assumed to equal materials.id.
+  */
+
+  /* ----------------------------------------------------------
+     1. COMPANY + MATERIAL CODE
+  ---------------------------------------------------------- */
+
+  if (
+    companyId &&
+    Number.isInteger(companyId) &&
+    companyCode
+  ) {
+    const {
+      data,
+      error,
+    } =
+      await supabase
+        .from(
+          "company_materials"
+        )
+        .select(
+          [
+            "material_id",
+            "company_id",
+            "datasheet_id",
+            "company_material_code",
+            "material_name",
+            "description",
+            "raw_data",
+          ].join(",")
+        )
+        .eq(
+          "company_id",
+          companyId
+        )
+        .eq(
+          "company_material_code",
+          companyCode
+        )
+        .order(
+          "material_id",
+          {
+            ascending:
+              false,
+          }
+        )
+        .limit(1);
+
+    if (error) {
+      throw new Error(
+        `Failed to find company material by company and code: ${error.message}`
+      );
+    }
+
+    if (
+      data?.length
+    ) {
+      return data[0];
+    }
+  }
+
+  /* ----------------------------------------------------------
+     2. MATERIAL CODE ONLY
+  ---------------------------------------------------------- */
+
+  if (companyCode) {
+    const {
+      data,
+      error,
+    } =
+      await supabase
+        .from(
+          "company_materials"
+        )
+        .select(
+          [
+            "material_id",
+            "company_id",
+            "datasheet_id",
+            "company_material_code",
+            "material_name",
+            "description",
+            "raw_data",
+          ].join(",")
+        )
+        .eq(
+          "company_material_code",
+          companyCode
+        )
+        .order(
+          "material_id",
+          {
+            ascending:
+              false,
+          }
+        )
+        .limit(10);
+
+    if (error) {
+      throw new Error(
+        `Failed to find company material by material code: ${error.message}`
+      );
+    }
+
+    if (
+      data?.length ===
+      1
+    ) {
+      return data[0];
+    }
+
+    if (
+      data?.length >
+        1 &&
+      companyId
+    ) {
+      const exact =
+        data.find(
+          (row) =>
+            Number(
+              row.company_id
+            ) === companyId
+        );
+
+      if (exact) {
+        return exact;
+      }
+    }
+  }
+
+  /* ----------------------------------------------------------
+     3. MATERIAL ID FALLBACK
+  ---------------------------------------------------------- */
+
+  const {
+    data: byMaterialId,
+    error:
+      materialIdError,
+  } =
+    await supabase
+      .from(
+        "company_materials"
+      )
+      .select(
+        [
+          "material_id",
+          "company_id",
+          "datasheet_id",
+          "company_material_code",
+          "material_name",
+          "description",
+          "raw_data",
+        ].join(",")
+      )
+      .eq(
+        "material_id",
+        source.id
+      )
+      .maybeSingle();
+
+  if (materialIdError) {
+    throw new Error(
+      `Failed to find company material by material_id: ${materialIdError.message}`
+    );
+  }
+
+  if (
+    byMaterialId
+  ) {
+    return byMaterialId;
+  }
+
+  return null;
+}
+
+/* ============================================================
+   FIND COMPANY EMAIL
+============================================================ */
+
+async function findCompanyEmail(
+  supabase,
+  companyId
+) {
+  if (
+    !companyId
+  ) {
+    return null;
+  }
+
+  /*
+    Use the existing companies table.
+
+    We select "*" because the exact email column name
+    should not be assumed.
+  */
+
+  const {
+    data: company,
+    error,
+  } =
+    await supabase
+      .from("companies")
+      .select("*")
+      .eq(
+        "id",
+        companyId
+      )
+      .maybeSingle();
+
+  if (error) {
+    console.warn(
+      "[APPROVAL QUEUE] Could not load company:",
+      error.message
+    );
+
+    return null;
+  }
+
+  if (!company) {
+    return null;
+  }
+
+  /*
+    Support common email field names.
+  */
+
+  const possibleEmailFields = [
+    "email",
+    "company_email",
+    "contact_email",
+    "official_email",
+    "email_address",
+  ];
+
+  for (
+    const field of
+      possibleEmailFields
+  ) {
+    const value =
+      company[field];
+
+    if (
+      value &&
+      String(value).trim()
+    ) {
+      return String(
+        value
+      ).trim();
+    }
+  }
+
+  return null;
+}
+
+/* ============================================================
+   CREATE GOVERNMENT AI CODE APPROVAL
+============================================================ */
+
+async function createApprovalQueue(
+  supabase,
+  source,
+  ncs,
+  acceptedMatches
+) {
+  console.log(
+    "=================================================="
+  );
+
+  console.log(
+    "[APPROVAL QUEUE] Starting approval creation..."
+  );
+
+  console.log(
+    "[APPROVAL QUEUE] Source:",
+    {
+      id:
+        source.id,
+
+      company:
+        source.company,
+
+      company_id:
+        source.company_id,
+
+      material_number:
+        source.material_number,
+
+      description:
+        source.description,
+    }
+  );
+
+  /* ----------------------------------------------------------
+     FIND COMPANY MATERIAL
+  ---------------------------------------------------------- */
+
+  const companyMaterial =
+    await findCompanyMaterial(
+      supabase,
+      source
+    );
+
+  if (!companyMaterial) {
+    throw new Error(
+      `Could not find company_materials record for company="${source.company}", company_id="${source.company_id}", material_code="${source.material_number}".`
+    );
+  }
+
+  console.log(
+    "[APPROVAL QUEUE] Resolved company_materials:",
+    {
+      company_material_id:
+        companyMaterial.material_id,
+
+      company_id:
+        companyMaterial.company_id,
+
+      datasheet_id:
+        companyMaterial.datasheet_id,
+
+      company_material_code:
+        companyMaterial.company_material_code,
+
+      material_name:
+        companyMaterial.material_name,
+    }
+  );
+
+  /* ----------------------------------------------------------
+     COMPANY EMAIL
+  ---------------------------------------------------------- */
+
+  const companyEmail =
+    await findCompanyEmail(
+      supabase,
+      companyMaterial.company_id
+    );
+
+  console.log(
+    "[APPROVAL QUEUE] Company email:",
+    companyEmail ||
+      "NOT FOUND"
+  );
+
+  /* ----------------------------------------------------------
+     CONFIDENCE
+  ---------------------------------------------------------- */
+
+  const strongestConfidence =
+    acceptedMatches.length
+      ? Math.max(
+          ...acceptedMatches.map(
+            (match) =>
+              numberOrZero(
+                match?.ai
+                  ?.confidence
+              )
+          )
+        )
+      : 0;
+
+  /* ----------------------------------------------------------
+     CHECK EXISTING APPROVALS
+  ---------------------------------------------------------- */
+
+  /*
+    We intentionally fetch a list instead of using
+    maybeSingle(), because an older database state may
+    already contain duplicate approval rows.
+  */
+
+  const {
+    data:
+      existingApprovals,
+    error:
+      existingApprovalError,
+  } =
+    await supabase
+      .from(
+        "ai_code_approvals"
+      )
+      .select(
+        [
+          "id",
+          "approval_status",
+          "ai_standard_code",
+          "company_material_id",
+        ].join(",")
+      )
+      .eq(
+        "company_material_id",
+        companyMaterial.material_id
+      )
+      .order(
+        "created_at",
+        {
+          ascending:
+            false,
+        }
+      )
+      .limit(20);
+
+  if (
+    existingApprovalError
+  ) {
+    throw new Error(
+      `Failed to check existing AI code approvals: ${existingApprovalError.message}`
+    );
+  }
+
+  console.log(
+    "[APPROVAL QUEUE] Existing approvals:",
+    existingApprovals || []
+  );
+
+  /*
+    Reuse an existing PENDING or APPROVED approval.
+
+    REJECTED records are deliberately NOT reused.
+    This means a company can submit the material again
+    after a rejection.
+  */
+
+  const activeApproval =
+    (
+      existingApprovals ||
+      []
+    ).find(
+      (row) => {
+        const status =
+          String(
+            row.approval_status ||
+              ""
+          )
+            .trim()
+            .toUpperCase();
+
+        return (
+          status ===
+            "PENDING" ||
+          status ===
+            "APPROVED"
+        );
+      }
+    );
+
+  if (
+    activeApproval
+  ) {
+    console.log(
+      `[APPROVAL QUEUE] Existing active approval ${activeApproval.id} found.`
+    );
+
+    return activeApproval;
+  }
+
+  /* ----------------------------------------------------------
+     REMOVE OLD REJECTED APPROVALS
+  ---------------------------------------------------------- */
+
+  const rejectedApprovalIds =
+    (
+      existingApprovals ||
+      []
+    )
+      .filter(
+        (row) =>
+          String(
+            row.approval_status ||
+              ""
+          )
+            .trim()
+            .toUpperCase() ===
+          "REJECTED"
+      )
+      .map(
+        (row) =>
+          row.id
+      )
+      .filter(Boolean);
+
+  if (
+    rejectedApprovalIds.length >
+    0
+  ) {
+    console.log(
+      "[APPROVAL QUEUE] Removing old rejected approval records:",
+      rejectedApprovalIds
+    );
+
+    const {
+      error:
+        oldRejectedDeleteError,
+    } =
+      await supabase
+        .from(
+          "ai_code_approvals"
+        )
+        .delete()
+        .in(
+          "id",
+          rejectedApprovalIds
+        );
+
+    if (
+      oldRejectedDeleteError
+    ) {
+      console.warn(
+        "[APPROVAL QUEUE] Could not remove old rejected approvals:",
+        oldRejectedDeleteError.message
+      );
+    }
+  }
+
+  /* ----------------------------------------------------------
+     BUILD APPROVAL
+  ---------------------------------------------------------- */
+
+  const approvalPayload = {
+    company_name:
+      source.company ||
+      "Unknown Company",
+
+    /*
+      VERY IMPORTANT:
+      This is company_materials.material_id.
+      It is NOT materials.id.
+    */
+    company_material_id:
+      companyMaterial.material_id,
+
+    part_name:
+      companyMaterial.material_name ||
+      source.description ||
+      companyMaterial.description ||
+      "Unknown Material",
+
+    company_material_code:
+      companyMaterial.company_material_code ||
+      source.material_number ||
+      "",
+
+    ai_standard_code:
+      ncs?.ncs_code ||
+      "",
+
+    ai_confidence:
+      strongestConfidence,
+
+    approval_status:
+      "PENDING",
+
+    approved_by:
+      null,
+
+    company_email:
+      companyEmail,
+
+    email_status:
+      "NOT_SENT",
+  };
+
+  console.log(
+    "--------------------------------------------------"
+  );
+
+  console.log(
+    "[APPROVAL QUEUE] INSERTING:",
+    approvalPayload
+  );
+
+  /* ----------------------------------------------------------
+     INSERT
+  ---------------------------------------------------------- */
+
+  const {
+    data: approval,
+    error:
+      approvalError,
+  } =
+    await supabase
+      .from(
+        "ai_code_approvals"
+      )
+      .insert(
+        approvalPayload
+      )
+      .select()
+      .single();
+
+  if (
+    approvalError
+  ) {
+    console.error(
+      "[APPROVAL QUEUE] INSERT FAILED:",
+      approvalError
+    );
+
+    throw new Error(
+      `Failed to create Government AI code approval: ${approvalError.message}`
+    );
+  }
+
+  console.log(
+    "--------------------------------------------------"
+  );
+
+  console.log(
+    "[APPROVAL QUEUE] SUCCESS!"
+  );
+
+  console.log(
+    "[APPROVAL QUEUE] Approval ID:",
+    approval.id
+  );
+
+  console.log(
+    "[APPROVAL QUEUE] Status:",
+    approval.approval_status
+  );
+
+  console.log(
+    "[APPROVAL QUEUE] BMG/NCS Code:",
+    approval.ai_standard_code
+  );
+
+  console.log(
+    "[APPROVAL QUEUE] Company:",
+    approval.company_name
+  );
+
+  console.log(
+    "[APPROVAL QUEUE] Company Material ID:",
+    approval.company_material_id
+  );
+
+  console.log(
+    "=================================================="
+  );
+
+  return approval;
+}
+
+/* ============================================================
    GOVERNMENT REVIEW REQUEST
 ============================================================ */
 
@@ -1980,78 +2631,123 @@ async function ensureGovernmentReviewRequest(
   supabase,
   ncs
 ) {
-  const {
-    data: existingRequest,
-    error:
-      requestLookupError,
-  } = await supabase
-    .from(
-      "standardization_requests"
-    )
-    .select(
-      "request_id"
-    )
-    .eq(
-      "ncs_id",
-      ncs.ncs_id
-    )
-    .eq(
-      "status",
-      "PENDING_REVIEW"
-    )
-    .limit(1)
-    .maybeSingle();
-
-  if (
-    requestLookupError
-  ) {
+  if (!ncs?.ncs_id) {
     throw new Error(
-      `Failed to check standardization request: ${requestLookupError.message}`
+      "Cannot create government review request without an NCS ID."
     );
   }
 
+  /*
+    First look for an existing pending request.
+
+    This prevents repeated matching from generating
+    unlimited Government review requests.
+  */
+
+  const {
+    data:
+      existingRequests,
+    error:
+      existingRequestError,
+  } =
+    await supabase
+      .from(
+        "standardization_requests"
+      )
+      .select(
+        "request_id, ncs_id, status"
+      )
+      .eq(
+        "ncs_id",
+        ncs.ncs_id
+      )
+      .order(
+        "request_id",
+        {
+          ascending:
+            false,
+        }
+      )
+      .limit(20);
+
   if (
-    existingRequest
+    existingRequestError
   ) {
-    return existingRequest;
+    throw new Error(
+      `Failed to check existing government review requests: ${existingRequestError.message}`
+    );
   }
+
+  const existingPending =
+    (
+      existingRequests ||
+      []
+    ).find(
+      (row) =>
+        String(
+          row.status ||
+            ""
+        )
+          .trim()
+          .toUpperCase() ===
+        "PENDING_REVIEW"
+    );
+
+  if (
+    existingPending
+  ) {
+    console.log(
+      `Existing government review request ${existingPending.request_id} found for NCS ${ncs.ncs_id}.`
+    );
+
+    return existingPending;
+  }
+
+  /* ----------------------------------------------------------
+     CREATE NEW REQUEST
+  ---------------------------------------------------------- */
 
   const {
     data,
     error,
-  } = await supabase
-    .from(
-      "standardization_requests"
-    )
-    .insert({
-      ncs_id:
-        ncs.ncs_id,
+  } =
+    await supabase
+      .from(
+        "standardization_requests"
+      )
+      .insert({
+        ncs_id:
+          ncs.ncs_id,
 
-      status:
-        "PENDING_REVIEW",
+        status:
+          "PENDING_REVIEW",
 
-      created_by_ai:
-        true,
+        created_by_ai:
+          true,
 
-      reviewed_by:
-        null,
+        reviewed_by:
+          null,
 
-      review_date:
-        null,
+        review_date:
+          null,
 
-      government_comments:
-        null,
-    })
-    .select(
-      "request_id"
-    )
-    .single();
+        government_comments:
+          null,
+      })
+      .select(
+        "request_id"
+      )
+      .single();
 
   if (error) {
     throw new Error(
       `Failed to create government review request: ${error.message}`
     );
   }
+
+  console.log(
+    `Created NEW government review request ${data.request_id} for NCS ${ncs.ncs_id}.`
+  );
 
   return data;
 }
@@ -2153,6 +2849,15 @@ export async function POST(
       );
     }
 
+    console.log(
+      "=================================================="
+    );
+
+    console.log(
+      "[MATCH MATERIALS] Processing material:",
+      materialId
+    );
+
     /* --------------------------------------------------------
        SOURCE
     -------------------------------------------------------- */
@@ -2160,16 +2865,17 @@ export async function POST(
     const {
       data: source,
       error: sourceError,
-    } = await supabase
-      .from("materials")
-      .select(
-        "id, company, company_id, material_number, description, specifications, category"
-      )
-      .eq(
-        "id",
-        materialId
-      )
-      .single();
+    } =
+      await supabase
+        .from("materials")
+        .select(
+          "id, company, company_id, material_number, description, specifications, category"
+        )
+        .eq(
+          "id",
+          materialId
+        )
+        .single();
 
     if (
       sourceError ||
@@ -2189,6 +2895,11 @@ export async function POST(
         }
       );
     }
+
+    console.log(
+      "[MATCH MATERIALS] Source:",
+      source
+    );
 
     /* --------------------------------------------------------
        LOAD MATERIALS
@@ -2744,6 +3455,11 @@ export async function POST(
         source
       );
 
+    console.log(
+      "[MATCH MATERIALS] NCS:",
+      ncs
+    );
+
     /* --------------------------------------------------------
        SAVE MAPPINGS
     -------------------------------------------------------- */
@@ -2757,6 +3473,10 @@ export async function POST(
         acceptedMatches
       );
 
+    console.log(
+      `[MATCH MATERIALS] Saved ${savedMappings.length} mapping(s).`
+    );
+
     /* --------------------------------------------------------
        GOVERNMENT REVIEW
     -------------------------------------------------------- */
@@ -2767,9 +3487,70 @@ export async function POST(
         ncs
       );
 
+    console.log(
+      "[MATCH MATERIALS] Government review:",
+      governmentReview
+    );
+
+    /* --------------------------------------------------------
+       GOVERNMENT AI CODE APPROVAL
+    -------------------------------------------------------- */
+
+    /*
+      THIS IS THE CRITICAL STEP.
+
+      The material is now explicitly placed into the
+      Government approval queue.
+    */
+
+    const approval =
+      await createApprovalQueue(
+        supabase,
+        source,
+        ncs,
+        acceptedMatches
+      );
+
+    console.log(
+      "[MATCH MATERIALS] Government approval:",
+      approval
+    );
+
     /* --------------------------------------------------------
        SUCCESS
     -------------------------------------------------------- */
+
+    console.log(
+      "=================================================="
+    );
+
+    console.log(
+      "[MATCH MATERIALS] COMPLETE"
+    );
+
+    console.log(
+      "Material:",
+      source.material_number
+    );
+
+    console.log(
+      "NCS:",
+      ncs.ncs_code
+    );
+
+    console.log(
+      "Approval:",
+      approval?.id
+    );
+
+    console.log(
+      "Approval status:",
+      approval?.approval_status
+    );
+
+    console.log(
+      "=================================================="
+    );
 
     return NextResponse.json({
       success:
@@ -2779,7 +3560,7 @@ export async function POST(
         true,
 
       message:
-        "ML-retrieved cross-company material equivalence identified and submitted for government review.",
+        "ML-retrieved cross-company material equivalence identified and submitted for government approval.",
 
       data: {
         source_material_id:
@@ -2826,6 +3607,22 @@ export async function POST(
 
         government_request_id:
           governmentReview?.request_id ||
+          null,
+
+        ai_code_approval_id:
+          approval?.id ||
+          null,
+
+        ai_code_approval_status:
+          approval?.approval_status ||
+          null,
+
+        company_material_id:
+          approval?.company_material_id ||
+          null,
+
+        company_email:
+          approval?.company_email ||
           null,
 
         ai_model_used:
@@ -2920,8 +3717,16 @@ export async function POST(
     });
   } catch (error) {
     console.error(
-      "Material matching error:",
+      "=================================================="
+    );
+
+    console.error(
+      "[MATCH MATERIALS] FATAL ERROR:",
       error
+    );
+
+    console.error(
+      "=================================================="
     );
 
     return NextResponse.json(

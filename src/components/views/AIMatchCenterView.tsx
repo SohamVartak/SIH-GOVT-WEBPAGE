@@ -21,12 +21,12 @@ import {
 
 import { motion } from "motion/react";
 
-import { supabase } from "../../../lib/supabase";
 import { useApp } from "../../context/AppContext";
 
 type DatabaseMaterial = {
   id: number;
   company: string | null;
+  company_id?: number | null;
   material_number: string | null;
   description: string | null;
   specifications: string | null;
@@ -79,6 +79,15 @@ type SearchResponse = {
   details?: string;
 };
 
+type ActiveMaterialsResponse = {
+  success: boolean;
+  materials?: DatabaseMaterial[];
+  count?: number;
+  totalMaterials?: number;
+  rejectedMaterials?: number;
+  error?: string;
+};
+
 const TARGET_COMPANIES = [
   "IOCL",
   "BPCL",
@@ -87,21 +96,12 @@ const TARGET_COMPANIES = [
   "ONGC",
 ];
 
-function normalizeCompany(
-  value: string | null
-) {
-  return (
-    value?.trim().toUpperCase() ||
-    "UNKNOWN"
-  );
+function normalizeCompany(value: string | null) {
+  return value?.trim().toUpperCase() || "UNKNOWN";
 }
 
-function recommendationLabel(
-  recommendation: string
-) {
-  switch (
-    recommendation
-  ) {
+function recommendationLabel(recommendation: string) {
+  switch (recommendation) {
     case "LIKELY_MATCH":
       return "LIKELY MATCH";
 
@@ -119,12 +119,8 @@ function recommendationLabel(
   }
 }
 
-function recommendationClasses(
-  recommendation: string
-) {
-  switch (
-    recommendation
-  ) {
+function recommendationClasses(recommendation: string) {
+  switch (recommendation) {
     case "LIKELY_MATCH":
       return "bg-emerald-50 text-emerald-700 border-emerald-200";
 
@@ -143,18 +139,14 @@ function recommendationClasses(
 }
 
 export default function AIMatchCenterView() {
-  const {
-    addToast,
-  } = useApp();
+  const { addToast } = useApp();
 
   /* =========================================================
      LIVE DATABASE MATERIALS
   ========================================================= */
 
   const [materials, setMaterials] =
-    useState<DatabaseMaterial[]>(
-      []
-    );
+    useState<DatabaseMaterial[]>([]);
 
   const [materialsLoading, setMaterialsLoading] =
     useState(true);
@@ -182,9 +174,7 @@ export default function AIMatchCenterView() {
     useState("");
 
   const [selectedMaterialId, setSelectedMaterialId] =
-    useState<number | null>(
-      null
-    );
+    useState<number | null>(null);
 
   const [suggestionsOpen, setSuggestionsOpen] =
     useState(false);
@@ -193,127 +183,118 @@ export default function AIMatchCenterView() {
     useState(false);
 
   const [results, setResults] =
-    useState<SearchResponse | null>(
-      null
-    );
+    useState<SearchResponse | null>(null);
 
   const [errorMessage, setErrorMessage] =
     useState("");
 
   /* =========================================================
-     LOAD MATERIALS DIRECTLY FROM SUPABASE
+     LOAD ACTIVE MATERIALS
      
-     This deliberately bypasses the one-time material snapshot
-     in AppContext so newly uploaded/processed materials appear
-     in the matcher.
+     IMPORTANT:
+     
+     Do NOT query the materials table directly here.
+     
+     The /api/materials/active endpoint filters rejected
+     materials and prevents stale/deleted records from being
+     shown in the AI matcher.
   ========================================================= */
 
-  const loadMaterials =
-    useCallback(
-      async (
-        showToast = false
-      ) => {
-        setMaterialsLoading(
-          true
+  const loadMaterials = useCallback(
+    async (showToast = false) => {
+      setMaterialsLoading(true);
+      setMaterialsError("");
+
+      try {
+        const response = await fetch(
+          `/api/materials/active?t=${Date.now()}`,
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              "Cache-Control": "no-cache",
+              Pragma: "no-cache",
+            },
+          }
         );
 
-        setMaterialsError("");
+        const data =
+          (await response.json()) as ActiveMaterialsResponse;
 
-        try {
-          const {
-            data,
-            error,
-          } =
-            await supabase
-              .from(
-                "materials"
-              )
-              .select(
-                `
-                id,
-                company,
-                material_number,
-                description,
-                specifications,
-                category
-                `
-              )
-              .order(
-                "id",
-                {
-                  ascending:
-                    false,
-                }
-              )
-              .limit(
-                5000
-              );
-
-          if (error) {
-            throw error;
-          }
-
-          setMaterials(
-            (data ||
-              []) as DatabaseMaterial[]
-          );
-
-          setLastMaterialsRefresh(
-            new Date()
-          );
-
-          if (
-            showToast
-          ) {
-            addToast({
-              title:
-                "Material Index Refreshed",
-              message:
-                `${(
-                  data || []
-                ).length.toLocaleString()} live material records loaded from Supabase.`,
-              type:
-                "success",
-            });
-          }
-        } catch (
-          error
-        ) {
-          console.error(
-            "Failed to load live materials:",
-            error
-          );
-
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Unable to load materials from Supabase.";
-
-          setMaterialsError(
-            message
-          );
-
-          if (
-            showToast
-          ) {
-            addToast({
-              title:
-                "Material Index Refresh Failed",
-              message,
-              type:
-                "error",
-            });
-          }
-        } finally {
-          setMaterialsLoading(
-            false
+        if (!response.ok || !data.success) {
+          throw new Error(
+            data.error ||
+              "Unable to load active materials."
           );
         }
-      },
-      [
-        addToast,
-      ]
-    );
+
+        const activeMaterials =
+          Array.isArray(data.materials)
+            ? data.materials
+            : [];
+
+        setMaterials(activeMaterials);
+
+        setLastMaterialsRefresh(new Date());
+
+        /*
+         * If the currently selected material was deleted/rejected,
+         * immediately clear it from the current search.
+         */
+        if (
+          selectedMaterialId !== null &&
+          !activeMaterials.some(
+            (material) =>
+              material.id === selectedMaterialId
+          )
+        ) {
+          setSelectedMaterialId(null);
+        }
+
+        if (showToast) {
+          const rejectedCount =
+            data.rejectedMaterials || 0;
+
+          addToast({
+            title: "Material Index Refreshed",
+            message:
+              `${activeMaterials.length.toLocaleString()} active material records loaded.` +
+              (rejectedCount > 0
+                ? ` ${rejectedCount.toLocaleString()} rejected records excluded.`
+                : ""),
+            type: "success",
+          });
+        }
+      } catch (error) {
+        console.error(
+          "Failed to load active materials:",
+          error
+        );
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to load active materials.";
+
+        setMaterialsError(message);
+
+        if (showToast) {
+          addToast({
+            title:
+              "Material Index Refresh Failed",
+            message,
+            type: "error",
+          });
+        }
+      } finally {
+        setMaterialsLoading(false);
+      }
+    },
+    [
+      addToast,
+      selectedMaterialId,
+    ]
+  );
 
   /* =========================================================
      INITIAL LOAD
@@ -321,21 +302,16 @@ export default function AIMatchCenterView() {
 
   useEffect(() => {
     void loadMaterials();
-  }, [
-    loadMaterials,
-  ]);
+  }, [loadMaterials]);
 
   /* =========================================================
      REFRESH WHEN WINDOW GETS FOCUS
-     
-     Useful after uploading a datasheet in another view/tab.
   ========================================================= */
 
   useEffect(() => {
-    const handleFocus =
-      () => {
-        void loadMaterials();
-      };
+    const handleFocus = () => {
+      void loadMaterials();
+    };
 
     window.addEventListener(
       "focus",
@@ -348,24 +324,21 @@ export default function AIMatchCenterView() {
         handleFocus
       );
     };
-  }, [
-    loadMaterials,
-  ]);
+  }, [loadMaterials]);
 
   /* =========================================================
      REFRESH ON VISIBILITY CHANGE
   ========================================================= */
 
   useEffect(() => {
-    const handleVisibility =
-      () => {
-        if (
-          document.visibilityState ===
-          "visible"
-        ) {
-          void loadMaterials();
-        }
-      };
+    const handleVisibility = () => {
+      if (
+        document.visibilityState ===
+        "visible"
+      ) {
+        void loadMaterials();
+      }
+    };
 
     document.addEventListener(
       "visibilitychange",
@@ -378,392 +351,331 @@ export default function AIMatchCenterView() {
         handleVisibility
       );
     };
-  }, [
-    loadMaterials,
-  ]);
+  }, [loadMaterials]);
 
   /* =========================================================
      SELECTED MATERIAL
   ========================================================= */
 
-  const selectedMaterial =
-    useMemo(
-      () =>
-        materials.find(
-          (
-            material
-          ) =>
-            material.id ===
-            selectedMaterialId
-        ) ||
-        null,
-      [
-        materials,
-        selectedMaterialId,
-      ]
-    );
+  const selectedMaterial = useMemo(
+    () =>
+      materials.find(
+        (material) =>
+          material.id ===
+          selectedMaterialId
+      ) || null,
+    [
+      materials,
+      selectedMaterialId,
+    ]
+  );
 
   /* =========================================================
      AUTOCOMPLETE
   ========================================================= */
 
-  const suggestions =
-    useMemo(() => {
-      const query =
-        materialInput
-          .trim()
-          .toLowerCase();
+  const suggestions = useMemo(() => {
+    const query =
+      materialInput
+        .trim()
+        .toLowerCase();
 
-      if (
-        !query
-      ) {
-        return materials.slice(
-          0,
-          10
-        );
-      }
+    if (!query) {
+      return materials.slice(0, 10);
+    }
 
-      return materials
-        .filter(
-          (
-            material
-          ) =>
-            String(
-              material.material_number ||
-                ""
-            )
-              .toLowerCase()
-              .includes(
-                query
-              ) ||
-            String(
-              material.description ||
-                ""
-            )
-              .toLowerCase()
-              .includes(
-                query
-              ) ||
-            String(
-              material.company ||
-                ""
-            )
-              .toLowerCase()
-              .includes(
-                query
-              )
-        )
-        .slice(
-          0,
-          10
-        );
-    }, [
-      materials,
-      materialInput,
-    ]);
+    return materials
+      .filter(
+        (material) =>
+          String(
+            material.material_number || ""
+          )
+            .toLowerCase()
+            .includes(query) ||
+          String(
+            material.description || ""
+          )
+            .toLowerCase()
+            .includes(query) ||
+          String(
+            material.company || ""
+          )
+            .toLowerCase()
+            .includes(query)
+      )
+      .slice(0, 10);
+  }, [
+    materials,
+    materialInput,
+  ]);
 
   /* =========================================================
      SELECT MATERIAL
   ========================================================= */
 
-  const selectMaterial =
-    (
-      material: DatabaseMaterial
-    ) => {
-      setSelectedMaterialId(
-        material.id
-      );
+  const selectMaterial = (
+    material: DatabaseMaterial
+  ) => {
+    setSelectedMaterialId(
+      material.id
+    );
 
-      setMaterialInput(
-        material.material_number ||
-          material.description ||
-          ""
-      );
-
-      setCompanyInput(
-        material.company ||
-          ""
-      );
-
-      setCategoryInput(
-        material.category ||
-          ""
-      );
-
-      setSpecificationInput(
-        material.specifications ||
-          ""
-      );
-
-      setSuggestionsOpen(
-        false
-      );
-
-      setResults(
-        null
-      );
-
-      setErrorMessage(
+    setMaterialInput(
+      material.material_number ||
+        material.description ||
         ""
-      );
-    };
+    );
+
+    setCompanyInput(
+      material.company || ""
+    );
+
+    setCategoryInput(
+      material.category || ""
+    );
+
+    setSpecificationInput(
+      material.specifications || ""
+    );
+
+    setSuggestionsOpen(false);
+
+    setResults(null);
+
+    setErrorMessage("");
+  };
 
   /* =========================================================
      EXACT MATERIAL LOOKUP
   ========================================================= */
 
-  const findExactMaterial =
-    () => {
-      const query =
-        materialInput
-          .trim()
-          .toLowerCase();
+  const findExactMaterial = () => {
+    const query =
+      materialInput
+        .trim()
+        .toLowerCase();
 
-      if (
-        !query
-      ) {
-        return null;
-      }
+    if (!query) {
+      return null;
+    }
 
-      return (
-        materials.find(
-          (
-            material
-          ) =>
-            String(
-              material.material_number ||
-                ""
-            )
-              .trim()
-              .toLowerCase() ===
-            query
-        ) ||
-        materials.find(
-          (
-            material
-          ) =>
-            String(
-              material.description ||
-                ""
-            )
-              .trim()
-              .toLowerCase() ===
-            query
-        ) ||
-        null
-      );
-    };
+    return (
+      materials.find(
+        (material) =>
+          String(
+            material.material_number ||
+              ""
+          )
+            .trim()
+            .toLowerCase() === query
+      ) ||
+      materials.find(
+        (material) =>
+          String(
+            material.description ||
+              ""
+          )
+            .trim()
+            .toLowerCase() === query
+      ) ||
+      null
+    );
+  };
 
   /* =========================================================
      SEARCH
   ========================================================= */
 
-  const runSearch =
-    async () => {
-      setErrorMessage("");
+  const runSearch = async () => {
+    setErrorMessage("");
+    setResults(null);
 
-      setResults(
-        null
+    const exactMaterial =
+      selectedMaterial ||
+      findExactMaterial();
+
+    const hasMaterial =
+      Boolean(exactMaterial);
+
+    const hasDirectQuery =
+      Boolean(
+        materialInput.trim() ||
+          specificationInput.trim() ||
+          companyInput.trim() ||
+          categoryInput.trim()
       );
 
-      const exactMaterial =
-        selectedMaterial ||
-        findExactMaterial();
+    if (
+      !hasMaterial &&
+      !hasDirectQuery
+    ) {
+      const message =
+        "Enter a material code, description, or technical specification.";
 
-      const hasMaterial =
-        Boolean(
-          exactMaterial
+      setErrorMessage(message);
+
+      addToast({
+        title: "Search Input Required",
+        message,
+        type: "warning",
+      });
+
+      return;
+    }
+
+    /*
+     * Extra safety:
+     *
+     * If the selected material disappeared from the active
+     * material index after an Admin delete/reject, do not send
+     * its ID to semantic-search.
+     */
+
+    if (
+      exactMaterial &&
+      !materials.some(
+        (material) =>
+          material.id ===
+          exactMaterial.id
+      )
+    ) {
+      const message =
+        "This material is no longer active. Please refresh the material index.";
+
+      setSelectedMaterialId(null);
+      setResults(null);
+      setErrorMessage(message);
+
+      addToast({
+        title:
+          "Material No Longer Available",
+        message,
+        type: "warning",
+      });
+
+      await loadMaterials(true);
+
+      return;
+    }
+
+    setIsSearching(true);
+
+    try {
+      const requestBody =
+        hasMaterial
+          ? {
+              materialId:
+                exactMaterial!.id,
+
+              matchCount: 30,
+            }
+          : {
+              company:
+                companyInput.trim(),
+
+              materialNumber:
+                materialInput.trim(),
+
+              description:
+                materialInput.trim(),
+
+              specifications:
+                specificationInput.trim(),
+
+              category:
+                categoryInput.trim(),
+
+              matchCount: 30,
+            };
+
+      const response =
+        await fetch(
+          "/api/semantic-search",
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+              "Cache-Control":
+                "no-cache",
+            },
+
+            body: JSON.stringify(
+              requestBody
+            ),
+          }
         );
 
-      const hasDirectQuery =
-        Boolean(
-          materialInput.trim() ||
-            specificationInput.trim() ||
-            companyInput.trim() ||
-            categoryInput.trim()
-        );
+      const data =
+        (await response.json()) as SearchResponse;
 
       if (
-        !hasMaterial &&
-        !hasDirectQuery
+        !response.ok ||
+        !data.success
       ) {
-        const message =
-          "Enter a material code, description, or technical specification.";
-
-        setErrorMessage(
-          message
+        throw new Error(
+          data.details ||
+            data.error ||
+            "Semantic search failed."
         );
-
-        addToast({
-          title:
-            "Search Input Required",
-          message,
-          type:
-            "warning",
-        });
-
-        return;
       }
 
-      setIsSearching(
-        true
+      setResults(data);
+
+      addToast({
+        title:
+          "AI Match Complete",
+
+        message:
+          `${data.count || 0} semantic matches evaluated.`,
+
+        type: "success",
+      });
+    } catch (error) {
+      console.error(
+        "Semantic search error:",
+        error
       );
 
-      try {
-        const requestBody =
-          hasMaterial
-            ? {
-                materialId:
-                  exactMaterial!.id,
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to run semantic search.";
 
-                matchCount:
-                  30,
-              }
-            : {
-                company:
-                  companyInput.trim(),
+      setErrorMessage(message);
 
-                materialNumber:
-                  materialInput.trim(),
-
-                description:
-                  materialInput.trim(),
-
-                specifications:
-                  specificationInput.trim(),
-
-                category:
-                  categoryInput.trim(),
-
-                matchCount:
-                  30,
-              };
-
-        const response =
-          await fetch(
-            "/api/semantic-search",
-            {
-              method:
-                "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-
-              body:
-                JSON.stringify(
-                  requestBody
-                ),
-            }
-          );
-
-        const data =
-          (await response.json()) as SearchResponse;
-
-        if (
-          !response.ok ||
-          !data.success
-        ) {
-          throw new Error(
-            data.details ||
-              data.error ||
-              "Semantic search failed."
-          );
-        }
-
-        setResults(
-          data
-        );
-
-        addToast({
-          title:
-            "AI Match Complete",
-
-          message:
-            `${data.count || 0} semantic matches evaluated.`,
-
-          type:
-            "success",
-        });
-      } catch (
-        error
-      ) {
-        console.error(
-          "Semantic search error:",
-          error
-        );
-
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Unable to run semantic search.";
-
-        setErrorMessage(
-          message
-        );
-
-        addToast({
-          title:
-            "AI Match Failed",
-
-          message,
-
-          type:
-            "error",
-        });
-      } finally {
-        setIsSearching(
-          false
-        );
-      }
-    };
+      addToast({
+        title: "AI Match Failed",
+        message,
+        type: "error",
+      });
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
   /* =========================================================
      CLEAR
   ========================================================= */
 
-  const clearSearch =
-    () => {
-      setMaterialInput(
-        ""
-      );
+  const clearSearch = () => {
+    setMaterialInput("");
 
-      setSpecificationInput(
-        ""
-      );
+    setSpecificationInput("");
 
-      setCompanyInput(
-        ""
-      );
+    setCompanyInput("");
 
-      setCategoryInput(
-        ""
-      );
+    setCategoryInput("");
 
-      setSelectedMaterialId(
-        null
-      );
+    setSelectedMaterialId(null);
 
-      setResults(
-        null
-      );
+    setResults(null);
 
-      setErrorMessage(
-        ""
-      );
+    setErrorMessage("");
 
-      setSuggestionsOpen(
-        false
-      );
-    };
-
-  /* =========================================================
-     SOURCE
-  ========================================================= */
-
-  const source =
-    results?.query;
+    setSuggestionsOpen(false);
+  };
 
   /* =========================================================
      COMPANY RESULTS
@@ -772,31 +684,22 @@ export default function AIMatchCenterView() {
   const companyResults =
     results?.company_results ||
     TARGET_COMPANIES.map(
-      (
-        company
-      ) => ({
-        rank:
-          null,
+      (company) => ({
+        rank: null,
 
-        material_id:
-          null,
+        material_id: null,
 
         company,
 
-        material_number:
-          null,
+        material_number: null,
 
-        description:
-          null,
+        description: null,
 
-        category:
-          null,
+        category: null,
 
-        similarity:
-          0,
+        similarity: 0,
 
-        similarity_percent:
-          0,
+        similarity_percent: 0,
 
         recommendation:
           "NO_MATCH",
@@ -855,7 +758,8 @@ export default function AIMatchCenterView() {
 
                   {materialsLoading
                     ? "Refreshing..."
-                    : `${materials.length.toLocaleString()} materials`}
+                    : `${materials.length.toLocaleString()} active materials`}
+
                 </div>
 
                 {lastMaterialsRefresh && (
@@ -890,15 +794,10 @@ export default function AIMatchCenterView() {
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
                 <input
-                  value={
-                    materialInput
-                  }
-                  onChange={(
-                    event
-                  ) => {
+                  value={materialInput}
+                  onChange={(event) => {
                     setMaterialInput(
-                      event.target
-                        .value
+                      event.target.value
                     );
 
                     setSelectedMaterialId(
@@ -914,9 +813,7 @@ export default function AIMatchCenterView() {
                       true
                     )
                   }
-                  onKeyDown={(
-                    event
-                  ) => {
+                  onKeyDown={(event) => {
                     if (
                       event.key ===
                       "Enter"
@@ -940,9 +837,7 @@ export default function AIMatchCenterView() {
                     <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
 
                       {suggestions.map(
-                        (
-                          material
-                        ) => (
+                        (material) => (
                           <button
                             key={
                               material.id
@@ -1015,15 +910,10 @@ export default function AIMatchCenterView() {
               </label>
 
               <input
-                value={
-                  companyInput
-                }
-                onChange={(
-                  event
-                ) =>
+                value={companyInput}
+                onChange={(event) =>
                   setCompanyInput(
-                    event.target
-                      .value
+                    event.target.value
                   )
                 }
                 placeholder="Optional: IOCL, BPCL, HPCL, BHEL..."
@@ -1044,12 +934,9 @@ export default function AIMatchCenterView() {
                 value={
                   specificationInput
                 }
-                onChange={(
-                  event
-                ) =>
+                onChange={(event) =>
                   setSpecificationInput(
-                    event.target
-                      .value
+                    event.target.value
                   )
                 }
                 rows={4}
@@ -1068,15 +955,10 @@ export default function AIMatchCenterView() {
               </label>
 
               <input
-                value={
-                  categoryInput
-                }
-                onChange={(
-                  event
-                ) =>
+                value={categoryInput}
+                onChange={(event) =>
                   setCategoryInput(
-                    event.target
-                      .value
+                    event.target.value
                   )
                 }
                 placeholder="Valve, Pump, Bearing..."
@@ -1092,9 +974,7 @@ export default function AIMatchCenterView() {
               <button
                 type="button"
                 onClick={() =>
-                  void loadMaterials(
-                    true
-                  )
+                  void loadMaterials(true)
                 }
                 disabled={
                   materialsLoading
@@ -1116,12 +996,8 @@ export default function AIMatchCenterView() {
 
               <button
                 type="button"
-                onClick={
-                  clearSearch
-                }
-                disabled={
-                  isSearching
-                }
+                onClick={clearSearch}
+                disabled={isSearching}
                 className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-xs font-bold text-slate-300 transition hover:bg-white/10"
               >
                 Clear
@@ -1172,11 +1048,35 @@ export default function AIMatchCenterView() {
             <div>
 
               <div className="font-bold">
-                Live material index could not be loaded
+                Active material index could not be loaded
               </div>
 
               <div className="mt-1">
                 {materialsError}
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* =====================================================
+            SEARCH ERROR
+        ===================================================== */}
+
+        {errorMessage && (
+          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+
+            <div>
+
+              <div className="font-bold">
+                Search Notice
+              </div>
+
+              <div className="mt-1">
+                {errorMessage}
               </div>
 
             </div>
@@ -1255,8 +1155,7 @@ export default function AIMatchCenterView() {
                 </div>
 
                 <div className="mt-1 font-mono text-xl font-black text-slate-900">
-                  {results.count ||
-                    0}
+                  {results.count || 0}
                 </div>
               </div>
 
@@ -1266,8 +1165,7 @@ export default function AIMatchCenterView() {
                 </div>
 
                 <div className="mt-1 font-bold text-slate-900">
-                  {results.embedding
-                    ?.model ||
+                  {results.embedding?.model ||
                     "Gemini"}
                 </div>
               </div>
@@ -1326,9 +1224,7 @@ export default function AIMatchCenterView() {
 
               {companyResults
                 .filter(
-                  (
-                    result
-                  ) =>
+                  (result) =>
                     TARGET_COMPANIES.includes(
                       normalizeCompany(
                         result.company
@@ -1581,9 +1477,7 @@ export default function AIMatchCenterView() {
                   <tbody className="divide-y divide-slate-100">
 
                     {results.matches.map(
-                      (
-                        match
-                      ) => (
+                      (match) => (
                         <tr
                           key={`${match.material_id}-${match.rank}`}
                           className="hover:bg-slate-50"

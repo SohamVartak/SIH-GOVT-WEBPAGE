@@ -2369,84 +2369,138 @@ export const UploadWorkflowView: React.FC = () => {
       }
     };
 
-  /* =========================================================
-     PROCESS DATASHEET
-  ========================================================= */
+  const processDatasheet = async (datasheetId: number) => {
+  try {
+    // =====================================================
+    // STEP 1 — PROCESS DATASHEET
+    // =====================================================
 
-  const processDatasheet =
-    async (
-      datasheetId: number
-    ) => {
-      try {
-        const response =
-          await fetch(
-            '/api/process-datasheet',
-            {
-              method:
-                'POST',
+    const response = await fetch("/api/process-datasheet", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        datasheetId,
+      }),
+    });
 
-              headers: {
-                'Content-Type':
-                  'application/json',
-              },
+    let result: any = null;
 
-              credentials:
-                'include',
+    try {
+      result = await response.json();
+    } catch {
+      result = null;
+    }
 
-              body:
-                JSON.stringify({
-                  datasheetId,
-                }),
-            }
-          );
+    if (!response.ok || !result?.success) {
+      throw new Error(
+        result?.details ||
+          result?.error ||
+          `Datasheet processing failed (${response.status})`
+      );
+    }
 
-        let result:
-          any = null;
+    console.log(
+      `Datasheet ${datasheetId} processed successfully:`,
+      result
+    );
 
-        try {
-          result =
-            await response.json();
-        } catch {
-          result = null;
-        }
+    // =====================================================
+    // STEP 2 — GET CREATED MATERIAL ID
+    // =====================================================
 
-        if (
-          !response.ok ||
-          !result?.success
-        ) {
-          throw new Error(
-            result?.details ||
-              result?.error ||
-              `Datasheet processing failed (${response.status})`
-          );
-        }
+    const materialId = Number(
+      result?.material?.id ??
+        result?.materialId ??
+        result?.material_id ??
+        result?.data?.materialId ??
+        result?.data?.material_id
+    );
 
-        return {
-          success:
-            true,
+    if (!Number.isInteger(materialId) || materialId <= 0) {
+      console.error(
+        "No valid material ID returned from process-datasheet:",
+        result
+      );
 
-          result,
-        };
-      } catch (
-        error
-      ) {
-        console.error(
-          `Datasheet processing failed for ID ${datasheetId}:`,
-          error
-        );
+      throw new Error(
+        "Datasheet was processed successfully, but no valid material ID was returned. AI matching could not be started."
+      );
+    }
 
-        return {
-          success:
-            false,
+    console.log(
+      `Starting AI matching for materials.id=${materialId}`
+    );
 
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Datasheet processing failed.',
-        };
-      }
+    // =====================================================
+    // STEP 3 — AI MATERIAL MATCHING
+    // =====================================================
+
+    const matchResponse = await fetch("/api/match-materials", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        materialId,
+        matchCount: 10,
+      }),
+    });
+
+    let matchResult: any = null;
+
+    try {
+      matchResult = await matchResponse.json();
+    } catch {
+      matchResult = null;
+    }
+
+    if (!matchResponse.ok || !matchResult?.success) {
+      console.error(
+        `AI matching failed for materials.id=${materialId}:`,
+        matchResult
+      );
+
+      throw new Error(
+        matchResult?.details ||
+          matchResult?.error ||
+          `AI material matching failed (${matchResponse.status})`
+      );
+    }
+
+    console.log(
+      `AI matching completed successfully for materials.id=${materialId}:`,
+      matchResult
+    );
+
+    // =====================================================
+    // COMPLETE
+    // =====================================================
+
+    return {
+      success: true,
+      result,
+      materialId,
+      matchResult,
     };
+  } catch (error) {
+    console.error(
+      `Datasheet processing/matching failed for ID ${datasheetId}:`,
+      error
+    );
 
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Datasheet processing or AI matching failed.",
+    };
+  }
+};
   /* =========================================================
      UPLOAD DATASHEET
   ========================================================= */

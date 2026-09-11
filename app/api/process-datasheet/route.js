@@ -255,59 +255,41 @@ function buildAttributes(
   const lower = text.toLowerCase();
 
   const attributes = {
-    material_number:
-      materialNumber,
+    material_number: materialNumber,
 
-    description:
-      description,
+    description: description,
 
-    category:
-      category,
+    category: category,
 
-    material_family:
-      category,
+    material_family: category,
 
-    dimensions:
-      null,
+    dimensions: null,
 
-    material_grade:
-      null,
+    material_grade: null,
 
-    pressure_rating:
-      null,
+    pressure_rating: null,
 
-    temperature_rating:
-      null,
+    temperature_rating: null,
 
-    standards:
-      null,
+    standards: null,
 
-    manufacturer:
-      null,
+    manufacturer: null,
 
-    model:
-      null,
+    model: null,
 
-    design_features:
-      null,
+    design_features: null,
 
-    size:
-      null,
+    size: null,
 
-    thickness:
-      null,
+    thickness: null,
 
-    hardness:
-      null,
+    hardness: null,
 
-    color:
-      null,
+    color: null,
 
-    application:
-      null,
+    application: null,
 
-    other_attributes:
-      null,
+    other_attributes: null,
   };
 
   /* =======================================================
@@ -1584,6 +1566,10 @@ export async function POST(
 
     /* =====================================================
        UPDATE ATTRIBUTES
+       
+       IMPORTANT:
+       material_attributes does NOT have updated_at.
+       Therefore updated_at is intentionally NOT included.
     ===================================================== */
 
     if (
@@ -1627,9 +1613,6 @@ export async function POST(
 
             other_attributes:
               attributes.other_attributes,
-
-            updated_at:
-              new Date().toISOString(),
           })
           .eq(
             "material_id",

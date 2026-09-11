@@ -24,8 +24,11 @@ import { Material360View } from './components/views/Material360View';
 import { ProcurementView } from './components/views/ProcurementView';
 import { CPSEManagementView } from './components/views/CPSEManagementView';
 import { AuditCenterView } from './components/views/AuditCenterView';
-import { AdminView } from './components/views/AdminView';
-import { LoginView } from './components/views/LoginView';
+
+// FIX: AdminView is a default export
+import AdminView from './components/views/AdminView';
+
+import LoginView from './components/views/LoginView';
 import { RegisterView } from './components/views/RegisterView';
 
 // ERP / Legacy Migration View
@@ -39,8 +42,7 @@ export const App: React.FC = () => {
 
   React.useEffect(() => {
     const syncRoute = () => {
-      const pathname =
-        window.location.pathname;
+      const pathname = window.location.pathname;
 
       if (pathname === '/login') {
         setCurrentTab('login');
@@ -162,10 +164,15 @@ export const App: React.FC = () => {
       <GovFooter />
 
       <FloatingChatbotButton />
+
       <BharatAIAssistant />
+
       <NotificationsDrawer />
+
       <CommandPalette />
+
       <SIHDemoModal />
+
       <ToastContainer />
 
     </div>
