@@ -94,6 +94,7 @@ function createFingerprint(data) {
     data.description,
     data.company_material_code,
     data.material_family,
+
     data.dimensions?.size_range,
     data.dimensions?.nominal_size,
     data.dimensions?.diameter,
@@ -103,20 +104,26 @@ function createFingerprint(data) {
     data.dimensions?.thickness,
     data.dimensions?.face_to_face,
     data.dimensions?.pressure_class,
+
     JSON.stringify(
       data.materials || {}
     ),
+
     JSON.stringify(
       data.design_features || []
     ),
+
     JSON.stringify(
       data.standards || []
     ),
+
     data.pressure_rating,
     data.temperature_rating,
+
     JSON.stringify(
       data.end_connections || []
     ),
+
     data.testing_standard,
     data.actuation,
     data.manufacturer,
@@ -128,6 +135,7 @@ function createFingerprint(data) {
     data.revision,
     data.datasheet_number,
     data.design_code,
+
     JSON.stringify(
       data.additional_attributes || {}
     ),
@@ -309,12 +317,6 @@ function buildMaterialDetails(data) {
 
 // ============================================================
 // BUILD ENGINEERING SEARCH TEXT
-//
-// IMPORTANT:
-// Company name and original company code are intentionally
-// excluded from the embedding text.
-// This prevents semantic search from becoming biased toward
-// a specific CPSE instead of the engineering identity.
 // ============================================================
 
 function buildEmbeddingText(
@@ -576,7 +578,7 @@ async function getBMGInfo(
   }
 
   const {
-    data: bmg,
+    data: bmgRows,
     error,
   } = await supabase
     .from(
@@ -597,7 +599,7 @@ async function getBMGInfo(
       "bmg_id",
       material.bmg_id
     )
-    .maybeSingle();
+    .limit(1);
 
   if (error) {
     console.error(
@@ -613,6 +615,9 @@ async function getBMGInfo(
       bmg_status: null,
     };
   }
+
+  const bmg =
+    bmgRows?.[0] || null;
 
   if (!bmg) {
     return {
@@ -726,7 +731,7 @@ async function getOrCreateCompany(
 
   const {
     data:
-      existingCompany,
+      existingCompanyRows,
     error:
       companyLookupError,
   } = await supabase
@@ -738,13 +743,23 @@ async function getOrCreateCompany(
       "company_name",
       normalizedCompany
     )
-    .maybeSingle();
+    .order(
+      "company_id",
+      {
+        ascending: true,
+      }
+    )
+    .limit(1);
 
   if (companyLookupError) {
     throw new Error(
       `Failed to find company: ${companyLookupError.message}`
     );
   }
+
+  const existingCompany =
+    existingCompanyRows?.[0] ||
+    null;
 
   if (existingCompany) {
     return existingCompany;
@@ -766,7 +781,7 @@ async function getOrCreateCompany(
     .select(
       "company_id, company_name, company_type"
     )
-    .single();
+    .limit(1);
 
   if (companyInsertError) {
     throw new Error(
@@ -774,7 +789,16 @@ async function getOrCreateCompany(
     );
   }
 
-  return newCompany;
+  if (
+    !newCompany ||
+    newCompany.length === 0
+  ) {
+    throw new Error(
+      "Company was created but no company record was returned."
+    );
+  }
+
+  return newCompany[0];
 }
 
 // ============================================================
@@ -794,7 +818,7 @@ async function getOrCreateFacility(
 
   const {
     data:
-      existingFacility,
+      existingFacilityRows,
     error:
       facilityLookupError,
   } = await supabase
@@ -818,13 +842,23 @@ async function getOrCreateFacility(
       "facility_name",
       facilityName
     )
-    .maybeSingle();
+    .order(
+      "facility_id",
+      {
+        ascending: true,
+      }
+    )
+    .limit(1);
 
   if (facilityLookupError) {
     throw new Error(
       `Failed to find facility: ${facilityLookupError.message}`
     );
   }
+
+  const existingFacility =
+    existingFacilityRows?.[0] ||
+    null;
 
   if (existingFacility) {
     return existingFacility;
@@ -877,7 +911,7 @@ async function getOrCreateFacility(
         address
       `
     )
-    .single();
+    .limit(1);
 
   if (facilityInsertError) {
     throw new Error(
@@ -885,7 +919,16 @@ async function getOrCreateFacility(
     );
   }
 
-  return newFacility;
+  if (
+    !newFacility ||
+    newFacility.length === 0
+  ) {
+    throw new Error(
+      "Facility was created but no facility record was returned."
+    );
+  }
+
+  return newFacility[0];
 }
 
 // ============================================================
@@ -1040,6 +1083,220 @@ function makeUniqueProductCode(
   return `BMG-${companyCode(
     companyName
   )}-${materialId}`;
+}
+
+// ============================================================
+// CREATE GOVERNMENT APPROVAL REQUEST
+// ============================================================
+
+async function createGovernmentApprovalRequest(
+  supabase,
+  material,
+  companyMaterial
+) {
+  try {
+    if (!material?.id) {
+      console.error(
+        "Government approval skipped: material ID missing."
+      );
+
+      return {
+        success: false,
+        skipped: true,
+        error:
+          "Material ID missing.",
+      };
+    }
+
+    if (
+      !companyMaterial?.material_id
+    ) {
+      console.error(
+        "Government approval skipped: company material ID missing."
+      );
+
+      return {
+        success: false,
+        skipped: true,
+        error:
+          "Company material ID missing.",
+      };
+    }
+
+    // --------------------------------------------------------
+    // CHECK WHETHER REQUEST ALREADY EXISTS
+    // --------------------------------------------------------
+
+    const {
+      data:
+        existingApprovalRows,
+      error:
+        existingApprovalError,
+    } = await supabase
+      .from(
+        "ai_code_approvals"
+      )
+      .select(
+        "id, company_material_id, status, ai_standard_code, bmg_code"
+      )
+      .eq(
+        "company_material_id",
+        companyMaterial.material_id
+      )
+      .order(
+        "id",
+        {
+          ascending: true,
+        }
+      )
+      .limit(20);
+
+    if (existingApprovalError) {
+      console.error(
+        "Government approval existing-request check failed:",
+        existingApprovalError
+      );
+    }
+
+    const existingApprovals =
+      existingApprovalRows || [];
+
+    const hasPending =
+      existingApprovals.some(
+        (row) =>
+          String(
+            row.status || ""
+          ).toUpperCase() ===
+          "PENDING"
+      );
+
+    const hasApproved =
+      existingApprovals.some(
+        (row) =>
+          String(
+            row.status || ""
+          ).toUpperCase() ===
+          "APPROVED"
+      );
+
+    if (hasPending) {
+      console.log(
+        "Government approval already pending for company material:",
+        companyMaterial.material_id
+      );
+
+      return {
+        success: true,
+        alreadyExists: true,
+        status: "PENDING",
+      };
+    }
+
+    if (hasApproved) {
+      console.log(
+        "Government approval already approved for company material:",
+        companyMaterial.material_id
+      );
+
+      return {
+        success: true,
+        alreadyExists: true,
+        status: "APPROVED",
+      };
+    }
+
+    // --------------------------------------------------------
+    // CREATE PENDING REQUEST
+    //
+    // IMPORTANT:
+    // company_material_id is the ID from company_materials.
+    // This is what the Government Portal uses to connect
+    // the approval request to the uploaded material.
+    // --------------------------------------------------------
+
+    const approvalPayload = {
+      company_material_id:
+        companyMaterial.material_id,
+
+      ai_standard_code:
+        null,
+
+      bmg_code:
+        null,
+
+      status:
+        "PENDING",
+    };
+
+    console.log(
+      "Creating Government approval request:",
+      approvalPayload
+    );
+
+    const {
+      data:
+        approvalRows,
+      error:
+        approvalError,
+    } = await supabase
+      .from(
+        "ai_code_approvals"
+      )
+      .insert(
+        approvalPayload
+      )
+      .select()
+      .limit(1);
+
+    if (approvalError) {
+      console.error(
+        "CREATE GOVERNMENT APPROVAL ERROR:",
+        approvalError
+      );
+
+      return {
+        success: false,
+        error:
+          approvalError.message,
+        details:
+          approvalError,
+      };
+    }
+
+    const approval =
+      approvalRows?.[0] ||
+      null;
+
+    console.log(
+      "GOVERNMENT APPROVAL CREATED:",
+      approval
+    );
+
+    return {
+      success: true,
+
+      created: true,
+
+      status:
+        "PENDING",
+
+      approval:
+        approval,
+    };
+  } catch (error) {
+    console.error(
+      "GOVERNMENT APPROVAL EXCEPTION:",
+      error
+    );
+
+    return {
+      success: false,
+
+      error:
+        error?.message ||
+        String(error),
+    };
+  }
 }
 
 // ============================================================
@@ -1285,7 +1542,7 @@ export async function POST(
 
     const {
       data:
-        datasheet,
+        datasheetRows,
       error:
         datasheetError,
     } = await supabase
@@ -1342,7 +1599,7 @@ export async function POST(
         },
       })
       .select()
-      .single();
+      .limit(1);
 
     if (datasheetError) {
       await supabase.storage
@@ -1356,13 +1613,31 @@ export async function POST(
       );
     }
 
+    if (
+      !datasheetRows ||
+      datasheetRows.length === 0
+    ) {
+      await supabase.storage
+        .from("datasheets")
+        .remove([
+          storagePath,
+        ]);
+
+      throw new Error(
+        "Datasheet was saved but no datasheet record was returned."
+      );
+    }
+
+    const datasheet =
+      datasheetRows[0];
+
     // ========================================================
     // INSERT MATERIAL
     // ========================================================
 
     const {
       data:
-        insertedMaterial,
+        materialRows,
       error:
         materialInsertError,
     } = await supabase
@@ -1414,7 +1689,7 @@ export async function POST(
           bmg_id
         `
       )
-      .single();
+      .limit(1);
 
     if (materialInsertError) {
       await supabase.storage
@@ -1436,6 +1711,18 @@ export async function POST(
       );
     }
 
+    if (
+      !materialRows ||
+      materialRows.length === 0
+    ) {
+      throw new Error(
+        "Material was inserted but no material record was returned."
+      );
+    }
+
+    const insertedMaterial =
+      materialRows[0];
+
     // ========================================================
     // CREATE UNIQUE PRODUCT CODE
     // ========================================================
@@ -1448,7 +1735,7 @@ export async function POST(
 
     const {
       data:
-        updatedMaterial,
+        updatedMaterialRows,
       error:
         productCodeError,
     } = await supabase
@@ -1476,7 +1763,7 @@ export async function POST(
           bmg_id
         `
       )
-      .single();
+      .limit(1);
 
     if (productCodeError) {
       throw new Error(
@@ -1484,13 +1771,25 @@ export async function POST(
       );
     }
 
+    if (
+      !updatedMaterialRows ||
+      updatedMaterialRows.length === 0
+    ) {
+      throw new Error(
+        "Material product code was updated but no material record was returned."
+      );
+    }
+
+    const updatedMaterial =
+      updatedMaterialRows[0];
+
     // ========================================================
     // COMPANY MATERIAL RECORD
     // ========================================================
 
     const {
       data:
-        companyMaterial,
+        companyMaterialRows,
       error:
         companyMaterialError,
     } = await supabase
@@ -1520,13 +1819,25 @@ export async function POST(
           data,
       })
       .select()
-      .single();
+      .limit(1);
 
     if (companyMaterialError) {
       throw new Error(
         `Failed to save company material: ${companyMaterialError.message}`
       );
     }
+
+    if (
+      !companyMaterialRows ||
+      companyMaterialRows.length === 0
+    ) {
+      throw new Error(
+        "Company material was saved but no company material record was returned."
+      );
+    }
+
+    const companyMaterial =
+      companyMaterialRows[0];
 
     // ========================================================
     // MATERIAL DETAILS
@@ -1539,7 +1850,7 @@ export async function POST(
 
     const {
       data:
-        savedDetails,
+        savedDetailsRows,
       error:
         detailsError,
     } = await supabase
@@ -1553,13 +1864,25 @@ export async function POST(
         ...materialDetails,
       })
       .select()
-      .single();
+      .limit(1);
 
     if (detailsError) {
       throw new Error(
         `Failed to save material technical details: ${detailsError.message}`
       );
     }
+
+    if (
+      !savedDetailsRows ||
+      savedDetailsRows.length === 0
+    ) {
+      throw new Error(
+        "Material technical details were saved but no detail record was returned."
+      );
+    }
+
+    const savedDetails =
+      savedDetailsRows[0];
 
     // ========================================================
     // AUTOMATIC ML EMBEDDING
@@ -1616,18 +1939,41 @@ export async function POST(
         error?.message ||
         String(error);
 
-      /*
-       * IMPORTANT:
-       * The material itself remains successfully saved.
-       *
-       * A temporary Gemini/API problem must not
-       * destroy the uploaded engineering record.
-       */
       console.error(
         `Automatic embedding failed for material ${updatedMaterial.id}:`,
         error
       );
     }
+
+    // ========================================================
+    // GOVERNMENT APPROVAL REQUEST
+    // ========================================================
+
+    /*
+     * IMPORTANT:
+     *
+     * The uploaded material itself is stored in `materials`.
+     *
+     * The Government Portal works from `ai_code_approvals`.
+     *
+     * Therefore we explicitly create a PENDING approval request
+     * using the `company_materials.material_id` created above.
+     *
+     * The AI/BMG code can be filled/updated later by the
+     * assignment process.
+     */
+
+    const governmentApproval =
+      await createGovernmentApprovalRequest(
+        supabase,
+        updatedMaterial,
+        companyMaterial
+      );
+
+    console.log(
+      "Government approval result:",
+      governmentApproval
+    );
 
     // ========================================================
     // UPDATE DATASHEET COUNTS
@@ -1657,7 +2003,7 @@ export async function POST(
       duplicate: false,
 
       message:
-        "New material saved successfully.",
+        "New material saved successfully and sent for Government approval.",
 
       data: {
         material_id:
@@ -1725,6 +2071,25 @@ export async function POST(
 
         ml_embedding_error:
           embeddingError,
+
+        government_approval: {
+          created:
+            governmentApproval.created ||
+            false,
+
+          status:
+            governmentApproval.status ||
+            null,
+
+          approval_id:
+            governmentApproval
+              .approval?.id ||
+            null,
+
+          error:
+            governmentApproval.error ||
+            null,
+        },
       },
     });
   } catch (error) {

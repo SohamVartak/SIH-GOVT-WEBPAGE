@@ -7,7 +7,8 @@ import { GoogleGenAI } from "@google/genai";
 ========================================================= */
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const EMBEDDING_MODEL = "gemini-embedding-2";
@@ -102,7 +103,11 @@ function unique(values) {
 }
 
 function isObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value);
+  return (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
 }
 
 function safeJsonParse(value) {
@@ -196,16 +201,6 @@ function getMaterialId(material) {
    PRODUCT FAMILY DETECTION
 ========================================================= */
 
-/*
-  IMPORTANT:
-  Product-family detection deliberately does NOT use the complete
-  specification/PDF text as its primary signal.
-
-  This prevents a bearing datasheet containing words such as
-  "valve", "pump", "pressure", etc. in harmonization/disclaimer
-  text from being classified as those products.
-*/
-
 function getProductFamily(materialOrText) {
   if (typeof materialOrText === "string") {
     return detectProductFamilyFromText(materialOrText);
@@ -223,7 +218,8 @@ function getProductFamily(materialOrText) {
   );
 
   if (explicitFamily) {
-    const detected = detectProductFamilyFromText(explicitFamily);
+    const detected =
+      detectProductFamilyFromText(explicitFamily);
 
     if (detected !== "generic") {
       return detected;
@@ -237,7 +233,8 @@ function getProductFamily(materialOrText) {
   const category = normalize(getCategory(material));
 
   if (category) {
-    const detected = detectProductFamilyFromText(category);
+    const detected =
+      detectProductFamilyFromText(category);
 
     if (detected !== "generic") {
       return detected;
@@ -247,7 +244,8 @@ function getProductFamily(materialOrText) {
   const description = normalize(getDescription(material));
 
   if (description) {
-    const detected = detectProductFamilyFromText(description);
+    const detected =
+      detectProductFamilyFromText(description);
 
     if (detected !== "generic") {
       return detected;
@@ -263,7 +261,8 @@ function getProductFamily(materialOrText) {
   );
 
   if (designFeatures) {
-    const detected = detectProductFamilyFromText(designFeatures);
+    const detected =
+      detectProductFamilyFromText(designFeatures);
 
     if (detected !== "generic") {
       return detected;
@@ -277,7 +276,8 @@ function getProductFamily(materialOrText) {
   );
 
   if (otherAttributes) {
-    const detected = detectProductFamilyFromText(otherAttributes);
+    const detected =
+      detectProductFamilyFromText(otherAttributes);
 
     if (detected !== "generic") {
       return detected;
@@ -506,11 +506,6 @@ function detectProductFamilyFromText(value) {
     },
   ];
 
-  /*
-    Bearing housing must be checked before bearing because
-    "bearing housing" contains "bearing".
-  */
-
   for (const family of families) {
     for (const pattern of family.patterns) {
       if (pattern.test(text)) {
@@ -526,7 +521,11 @@ function detectProductFamilyFromText(value) {
    QUERY FAMILY
 ========================================================= */
 
-function detectQueryFamily(search, specification, category) {
+function detectQueryFamily(
+  search,
+  specification,
+  category
+) {
   const combined = [
     clean(search),
     clean(specification),
@@ -569,18 +568,30 @@ function tokenSimilarity(a, b) {
     }
   }
 
-  const union = new Set([...setA, ...setB]).size;
+  const union = new Set([
+    ...setA,
+    ...setB,
+  ]).size;
 
   if (!union) {
     return 0;
   }
 
   const jaccard = intersection / union;
+
   const containment =
-    intersection / Math.max(1, Math.min(setA.size, setB.size));
+    intersection /
+    Math.max(
+      1,
+      Math.min(
+        setA.size,
+        setB.size
+      )
+    );
 
   return clamp(
-    jaccard * 55 + containment * 45,
+    jaccard * 55 +
+      containment * 45,
     0,
     100
   );
@@ -599,11 +610,21 @@ function substringSimilarity(a, b) {
   }
 
   if (x.includes(y) || y.includes(x)) {
-    const shorter = Math.min(x.length, y.length);
-    const longer = Math.max(x.length, y.length);
+    const shorter = Math.min(
+      x.length,
+      y.length
+    );
+
+    const longer = Math.max(
+      x.length,
+      y.length
+    );
 
     return clamp(
-      75 + (shorter / Math.max(1, longer)) * 25,
+      75 +
+        (shorter /
+          Math.max(1, longer)) *
+          25,
       0,
       100
     );
@@ -635,14 +656,22 @@ function numberSimilarity(a, b) {
     return 100;
   }
 
-  const difference = Math.abs(na - nb);
-  const denominator = Math.max(Math.abs(na), Math.abs(nb), 1);
+  const difference = Math.abs(
+    na - nb
+  );
+
+  const denominator = Math.max(
+    Math.abs(na),
+    Math.abs(nb),
+    1
+  );
 
   const relativeDifference =
     difference / denominator;
 
   return clamp(
-    100 - relativeDifference * 100,
+    100 -
+      relativeDifference * 100,
     0,
     100
   );
@@ -676,43 +705,44 @@ function extractTechnicalValues(text) {
 
   const dimensionPatterns = [
     /\b\d+(?:\.\d+)?\s*(?:mm|cm|m|inch|in)\b/gi,
+
     /\b\d+(?:\.\d+)?\s*[xX×]\s*\d+(?:\.\d+)?(?:\s*[xX×]\s*\d+(?:\.\d+)?)?\s*(?:mm|cm|m|inch|in)?\b/gi,
   ];
 
   for (const pattern of dimensionPatterns) {
     result.dimensions.push(
-      ...source.match(pattern) || []
+      ...(source.match(pattern) || [])
     );
   }
 
   result.pressures.push(
-    ...source.match(
+    ...(source.match(
       /\b(?:pn|class)\s*[-:]?\s*\d+(?:\.\d+)?\b/gi
-    ) || []
+    ) || [])
   );
 
   result.temperatures.push(
-    ...source.match(
+    ...(source.match(
       /\b-?\d+(?:\.\d+)?\s*(?:°?\s*c|°?\s*f|deg\s*c|deg\s*f)\b/gi
-    ) || []
+    ) || [])
   );
 
   result.voltages.push(
-    ...source.match(
+    ...(source.match(
       /\b\d+(?:\.\d+)?\s*(?:v|kv)\b/gi
-    ) || []
+    ) || [])
   );
 
   result.speeds.push(
-    ...source.match(
+    ...(source.match(
       /\b\d+(?:\.\d+)?\s*(?:rpm|r\/min)\b/gi
-    ) || []
+    ) || [])
   );
 
   result.materials.push(
-    ...source.match(
+    ...(source.match(
       /\b(?:ss\s*)?(?:304|316|316l|321|347|410|420|430)\b/gi
-    ) || []
+    ) || [])
   );
 
   const materialWords = [
@@ -736,45 +766,51 @@ function extractTechnicalValues(text) {
   ];
 
   for (const material of materialWords) {
-    if (normalize(source).includes(normalize(material))) {
-      result.materials.push(material);
+    if (
+      normalize(source).includes(
+        normalize(material)
+      )
+    ) {
+      result.materials.push(
+        material
+      );
     }
   }
 
   result.standards.push(
-    ...source.match(
+    ...(source.match(
       /\b(?:api|asme|ansi|astm|iso|iec|is|din|en|bs)\s*[-:]?\s*[a-z0-9.\-]+\b/gi
-    ) || []
+    ) || [])
   );
 
   result.designations.push(
-    ...source.match(
+    ...(source.match(
       /\b(?:sn|dn|pn|model|type|size)\s*[-:]?\s*[a-z0-9.\-]+\b/gi
-    ) || []
+    ) || [])
   );
 
   result.sizes.push(
-    ...source.match(
+    ...(source.match(
       /\b(?:dn|size)\s*[-:]?\s*\d+(?:\.\d+)?\b/gi
-    ) || []
+    ) || [])
   );
 
   result.quantities.push(
-    ...source.match(
+    ...(source.match(
       /\b(?:qty|quantity)\s*[:\-]?\s*\d+(?:\.\d+)?\b/gi
-    ) || []
+    ) || [])
   );
 
   result.seals.push(
-    ...source.match(
+    ...(source.match(
       /\b\d+\s+(?:felt|oil|mechanical|lip|rubber)\s+seals?\b/gi
-    ) || []
+    ) || [])
   );
 
   result.ratings.push(
-    ...source.match(
+    ...(source.match(
       /\b(?:class|pn|rating)\s*[-:]?\s*[a-z0-9.\-]+\b/gi
-    ) || []
+    ) || [])
   );
 
   for (const key of Object.keys(result)) {
@@ -807,6 +843,7 @@ function getTechnicalFeatureText(material) {
     material?.specification,
     material?.technical_specifications,
     material?.technicalSpecification,
+    material?.technical_attributes_text,
   ];
 
   for (const value of fields) {
@@ -822,28 +859,35 @@ function getTechnicalFeatureText(material) {
    CRITICAL CONFLICT DETECTION
 ========================================================= */
 
-function hasCriticalConflict(source, candidate) {
-  const sourceText = getTechnicalFeatureText(source);
-  const candidateText = getTechnicalFeatureText(candidate);
+function hasCriticalConflict(
+  source,
+  candidate
+) {
+  const sourceText =
+    getTechnicalFeatureText(source);
 
-  const sourceValues = extractTechnicalValues(sourceText);
-  const candidateValues = extractTechnicalValues(candidateText);
+  const candidateText =
+    getTechnicalFeatureText(candidate);
 
-  /*
-    Explicit bearing designation conflicts.
-    Example:
-      6205 vs 6305
-    should not be treated as equivalent merely because
-    both are bearings.
-  */
+  const sourceValues =
+    extractTechnicalValues(
+      sourceText
+    );
 
-  const sourceDesignations = sourceValues.designations
-    .map(normalize)
-    .filter(Boolean);
+  const candidateValues =
+    extractTechnicalValues(
+      candidateText
+    );
 
-  const candidateDesignations = candidateValues.designations
-    .map(normalize)
-    .filter(Boolean);
+  const sourceDesignations =
+    sourceValues.designations
+      .map(normalize)
+      .filter(Boolean);
+
+  const candidateDesignations =
+    candidateValues.designations
+      .map(normalize)
+      .filter(Boolean);
 
   if (
     sourceDesignations.length &&
@@ -851,32 +895,54 @@ function hasCriticalConflict(source, candidate) {
   ) {
     const sourceDesignationNumbers =
       sourceDesignations
-        .map((x) => x.match(/\d+(?:\.\d+)?/g)?.join("-"))
+        .map(
+          (x) =>
+            x
+              .match(
+                /\d+(?:\.\d+)?/g
+              )
+              ?.join("-")
+        )
         .filter(Boolean);
 
     const candidateDesignationNumbers =
       candidateDesignations
-        .map((x) => x.match(/\d+(?:\.\d+)?/g)?.join("-"))
+        .map(
+          (x) =>
+            x
+              .match(
+                /\d+(?:\.\d+)?/g
+              )
+              ?.join("-")
+        )
         .filter(Boolean);
 
     if (
       sourceDesignationNumbers.length &&
       candidateDesignationNumbers.length
     ) {
-      const overlap = sourceDesignationNumbers.some(
-        (value) =>
-          candidateDesignationNumbers.includes(value)
-      );
+      const overlap =
+        sourceDesignationNumbers.some(
+          (value) =>
+            candidateDesignationNumbers.includes(
+              value
+            )
+        );
 
       if (!overlap) {
-        const sourceFamily = getProductFamily(source);
-        const candidateFamily = getProductFamily(candidate);
+        const sourceFamily =
+          getProductFamily(source);
+
+        const candidateFamily =
+          getProductFamily(candidate);
 
         if (
-          sourceFamily === candidateFamily &&
+          sourceFamily ===
+            candidateFamily &&
           (
             sourceFamily === "bearing" ||
-            sourceFamily === "bearing housing" ||
+            sourceFamily ===
+              "bearing housing" ||
             sourceFamily === "valve" ||
             sourceFamily === "flange"
           )
@@ -891,21 +957,24 @@ function hasCriticalConflict(source, candidate) {
     }
   }
 
-  /*
-    Pressure class conflict.
-  */
-
   const sourcePressure =
-    sourceValues.pressures.map(normalize);
+    sourceValues.pressures.map(
+      normalize
+    );
 
   const candidatePressure =
-    candidateValues.pressures.map(normalize);
+    candidateValues.pressures.map(
+      normalize
+    );
 
   if (
     sourcePressure.length &&
     candidatePressure.length &&
-    !sourcePressure.some((value) =>
-      candidatePressure.includes(value)
+    !sourcePressure.some(
+      (value) =>
+        candidatePressure.includes(
+          value
+        )
     )
   ) {
     return {
@@ -915,21 +984,24 @@ function hasCriticalConflict(source, candidate) {
     };
   }
 
-  /*
-    Voltage conflict.
-  */
-
   const sourceVoltage =
-    sourceValues.voltages.map(normalize);
+    sourceValues.voltages.map(
+      normalize
+    );
 
   const candidateVoltage =
-    candidateValues.voltages.map(normalize);
+    candidateValues.voltages.map(
+      normalize
+    );
 
   if (
     sourceVoltage.length &&
     candidateVoltage.length &&
-    !sourceVoltage.some((value) =>
-      candidateVoltage.includes(value)
+    !sourceVoltage.some(
+      (value) =>
+        candidateVoltage.includes(
+          value
+        )
     )
   ) {
     return {
@@ -939,28 +1011,33 @@ function hasCriticalConflict(source, candidate) {
     };
   }
 
-  /*
-    Material conflict.
-  */
-
   const sourceMaterials =
-    sourceValues.materials.map(normalize);
+    sourceValues.materials.map(
+      normalize
+    );
 
   const candidateMaterials =
-    candidateValues.materials.map(normalize);
+    candidateValues.materials.map(
+      normalize
+    );
 
   if (
     sourceMaterials.length &&
     candidateMaterials.length
   ) {
     const materialOverlap =
-      sourceMaterials.some((value) =>
-        candidateMaterials.some(
-          (candidateValue) =>
-            candidateValue === value ||
-            candidateValue.includes(value) ||
-            value.includes(candidateValue)
-        )
+      sourceMaterials.some(
+        (value) =>
+          candidateMaterials.some(
+            (candidateValue) =>
+              candidateValue === value ||
+              candidateValue.includes(
+                value
+              ) ||
+              value.includes(
+                candidateValue
+              )
+          )
       );
 
     if (!materialOverlap) {
@@ -982,9 +1059,15 @@ function hasCriticalConflict(source, candidate) {
    TECHNICAL FEATURE SCORE
 ========================================================= */
 
-function calculateFeatureScore(source, candidate) {
-  const sourceFamily = getProductFamily(source);
-  const candidateFamily = getProductFamily(candidate);
+function calculateFeatureScore(
+  source,
+  candidate
+) {
+  const sourceFamily =
+    getProductFamily(source);
+
+  const candidateFamily =
+    getProductFamily(candidate);
 
   if (
     sourceFamily !== "generic" &&
@@ -1000,38 +1083,30 @@ function calculateFeatureScore(source, candidate) {
   }
 
   const conflictResult =
-    hasCriticalConflict(source, candidate);
+    hasCriticalConflict(
+      source,
+      candidate
+    );
 
   if (conflictResult.conflict) {
     return {
       score: 0,
       conflict: true,
-      reason: conflictResult.reason,
+      reason:
+        conflictResult.reason,
     };
   }
 
-  const sourceDescription =
-    getDescription(source);
-
-  const candidateDescription =
-    getDescription(candidate);
-
   const descriptionScore =
     textSimilarity(
-      sourceDescription,
-      candidateDescription
+      getDescription(source),
+      getDescription(candidate)
     );
-
-  const sourceCategory =
-    getCategory(source);
-
-  const candidateCategory =
-    getCategory(candidate);
 
   const categoryScore =
     textSimilarity(
-      sourceCategory,
-      candidateCategory
+      getCategory(source),
+      getCategory(candidate)
     );
 
   const sourceFeatures =
@@ -1059,10 +1134,14 @@ function calculateFeatureScore(source, candidate) {
   }
 
   const sourceValues =
-    extractTechnicalValues(sourceFeatures);
+    extractTechnicalValues(
+      sourceFeatures
+    );
 
   const candidateValues =
-    extractTechnicalValues(candidateFeatures);
+    extractTechnicalValues(
+      candidateFeatures
+    );
 
   let criticalScore = 0;
   let criticalComparisons = 0;
@@ -1081,8 +1160,11 @@ function calculateFeatureScore(source, candidate) {
   ];
 
   for (const field of criticalFields) {
-    const a = sourceValues[field] || [];
-    const b = candidateValues[field] || [];
+    const a =
+      sourceValues[field] || [];
+
+    const b =
+      candidateValues[field] || [];
 
     if (!a.length || !b.length) {
       continue;
@@ -1107,7 +1189,8 @@ function calculateFeatureScore(source, candidate) {
 
   if (criticalComparisons > 0) {
     criticalScore =
-      criticalScore / criticalComparisons;
+      criticalScore /
+      criticalComparisons;
   }
 
   let score =
@@ -1117,19 +1200,11 @@ function calculateFeatureScore(source, candidate) {
     familyScore * 0.25;
 
   if (criticalComparisons > 0) {
-    score += criticalScore * 0.15;
+    score +=
+      criticalScore * 0.15;
   } else {
-    /*
-      Missing critical specifications should reduce confidence,
-      not invent equivalence.
-    */
-
     score *= 0.90;
   }
-
-  /*
-    Same product family is mandatory for strong technical matches.
-  */
 
   if (
     sourceFamily !== "generic" &&
@@ -1155,10 +1230,11 @@ function calculateFeatureScore(source, candidate) {
 ========================================================= */
 
 async function loadAllMaterials() {
-  const { data, error } = await supabase
-    .from("materials")
-    .select("*")
-    .limit(MAX_CATALOG_RESULTS);
+  const { data, error } =
+    await supabase
+      .from("materials")
+      .select("*")
+      .limit(MAX_CATALOG_RESULTS);
 
   if (error) {
     throw new Error(
@@ -1169,7 +1245,9 @@ async function loadAllMaterials() {
   return data || [];
 }
 
-async function loadMaterialAttributes(materialIds) {
+async function loadMaterialAttributes(
+  materialIds
+) {
   if (!materialIds.length) {
     return {};
   }
@@ -1185,12 +1263,19 @@ async function loadMaterialAttributes(materialIds) {
 
   for (const table of possibleTables) {
     try {
-      const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .in("material_id", materialIds);
+      const { data, error } =
+        await supabase
+          .from(table)
+          .select("*")
+          .in(
+            "material_id",
+            materialIds
+          );
 
-      if (error || !data?.length) {
+      if (
+        error ||
+        !data?.length
+      ) {
         continue;
       }
 
@@ -1200,7 +1285,10 @@ async function loadMaterialAttributes(materialIds) {
           row.materialId ??
           row.materialID;
 
-        if (materialId === null || materialId === undefined) {
+        if (
+          materialId === null ||
+          materialId === undefined
+        ) {
           continue;
         }
 
@@ -1224,7 +1312,9 @@ async function loadMaterialAttributes(materialIds) {
    ATTRIBUTE ENRICHMENT
 ========================================================= */
 
-function attributesToText(attributes) {
+function attributesToText(
+  attributes
+) {
   if (!attributes) {
     return "";
   }
@@ -1247,8 +1337,9 @@ function attributesToText(attributes) {
                 "updated_at",
               ].includes(key)
           )
-          .map(([key, value]) =>
-            `${key}: ${clean(value)}`
+          .map(
+            ([key, value]) =>
+              `${key}: ${clean(value)}`
           )
           .join(" ");
       })
@@ -1257,8 +1348,9 @@ function attributesToText(attributes) {
 
   if (isObject(attributes)) {
     return Object.entries(attributes)
-      .map(([key, value]) =>
-        `${key}: ${clean(value)}`
+      .map(
+        ([key, value]) =>
+          `${key}: ${clean(value)}`
       )
       .join(" ");
   }
@@ -1266,7 +1358,10 @@ function attributesToText(attributes) {
   return clean(attributes);
 }
 
-function enrichMaterial(material, attributes = []) {
+function enrichMaterial(
+  material,
+  attributes = []
+) {
   const attributeText =
     attributesToText(attributes);
 
@@ -1294,15 +1389,21 @@ function enrichMaterial(material, attributes = []) {
   };
 }
 
-function enrichMaterials(materials, attributeMap) {
-  return materials.map((material) => {
-    const id = getMaterialId(material);
+function enrichMaterials(
+  materials,
+  attributeMap
+) {
+  return materials.map(
+    (material) => {
+      const id =
+        getMaterialId(material);
 
-    return enrichMaterial(
-      material,
-      attributeMap[id] || []
-    );
-  });
+      return enrichMaterial(
+        material,
+        attributeMap[id] || []
+      );
+    }
+  );
 }
 
 /* =========================================================
@@ -1319,20 +1420,28 @@ async function loadBMGMappings() {
 
   for (const table of tableNames) {
     try {
-      const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .limit(MAX_CATALOG_RESULTS);
+      const { data, error } =
+        await supabase
+          .from(table)
+          .select("*")
+          .limit(
+            MAX_CATALOG_RESULTS
+          );
 
-      if (error || !data?.length) {
+      if (
+        error ||
+        !data?.length
+      ) {
         continue;
       }
 
       mappings.push(
-        ...data.map((row) => ({
-          ...row,
-          _mapping_table: table,
-        }))
+        ...data.map(
+          (row) => ({
+            ...row,
+            _mapping_table: table,
+          })
+        )
       );
     } catch {
       continue;
@@ -1347,19 +1456,21 @@ async function loadBMGMappings() {
 ========================================================= */
 
 function getBMGCodeFromRow(row) {
-  if (!row) {
-    return "";
-  }
+  if (!row) return null;
 
-  return clean(
+  return (
     row.bmg_code ||
-      row.bmgCode ||
-      row.ncs_code ||
-      row.ncsCode ||
-      row.standard_code ||
-      row.standardCode ||
-      row.code ||
-      ""
+    row.bmgCode ||
+    row.ncs_code ||
+    row.ncsCode ||
+    row.identity_code ||
+    row.identityCode ||
+    row.standard_code ||
+    row.standardCode ||
+    row.material_code ||
+    row.materialCode ||
+    row.code ||
+    null
   );
 }
 
@@ -1398,9 +1509,11 @@ function getMappingMaterialId(row) {
 ========================================================= */
 
 function buildSearchText(material) {
-  const description = getDescription(material);
+  const description =
+    getDescription(material);
 
-  const category = getCategory(material);
+  const category =
+    getCategory(material);
 
   const family =
     material?.product_family ||
@@ -1412,16 +1525,12 @@ function buildSearchText(material) {
   const bmgCode =
     getBMGCodeFromRow(material);
 
-  /*
-    Specifications are intentionally included only as a
-    secondary signal. They must NOT dominate family matching.
-  */
-
   const specifications =
     getSpecifications(material);
 
   const technicalAttributes =
-    material?.technical_attributes_text || "";
+    material?.technical_attributes_text ||
+    "";
 
   return normalize(
     [
@@ -1444,10 +1553,13 @@ function searchScoreForCatalog(
   category,
   material
 ) {
-  const queryText =
-    [query, specification, category]
-      .filter(Boolean)
-      .join(" ");
+  const queryText = [
+    query,
+    specification,
+    category,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const queryFamily =
     detectQueryFamily(
@@ -1469,27 +1581,21 @@ function searchScoreForCatalog(
     getSpecifications(material);
 
   const materialTechnicalAttributes =
-    material?.technical_attributes_text || "";
+    material?.technical_attributes_text ||
+    "";
 
   let score = 0;
-
-  /*
-    1. PRODUCT FAMILY IS THE STRONGEST SIGNAL.
-  */
 
   if (
     queryFamily !== "generic" &&
     materialFamily !== "generic"
   ) {
-    if (queryFamily === materialFamily) {
+    if (
+      queryFamily ===
+      materialFamily
+    ) {
       score += 65;
     } else {
-      /*
-        Do not allow random PDF text to make a valve appear
-        as a bearing just because "bearing" occurs somewhere
-        inside the PDF.
-      */
-
       return {
         score: 0,
         familyMatch: false,
@@ -1499,21 +1605,14 @@ function searchScoreForCatalog(
     }
   }
 
-  /*
-    2. Description.
-  */
-
   const descriptionScore =
     textSimilarity(
       queryText,
       description
     );
 
-  score += descriptionScore * 0.20;
-
-  /*
-    3. Category.
-  */
+  score +=
+    descriptionScore * 0.20;
 
   if (category) {
     score +=
@@ -1523,10 +1622,6 @@ function searchScoreForCatalog(
       ) * 0.10;
   }
 
-  /*
-    4. Technical specifications as supporting evidence.
-  */
-
   if (specification) {
     score +=
       textSimilarity(
@@ -1535,10 +1630,6 @@ function searchScoreForCatalog(
       ) * 0.10;
   }
 
-  /*
-    5. Technical attributes.
-  */
-
   if (materialTechnicalAttributes) {
     score +=
       textSimilarity(
@@ -1546,10 +1637,6 @@ function searchScoreForCatalog(
         materialTechnicalAttributes
       ) * 0.05;
   }
-
-  /*
-    6. Exact description token occurrence.
-  */
 
   const normalizedQuery =
     normalize(queryText);
@@ -1560,7 +1647,9 @@ function searchScoreForCatalog(
   if (
     normalizedQuery &&
     normalizedDescription &&
-    normalizedDescription.includes(normalizedQuery)
+    normalizedDescription.includes(
+      normalizedQuery
+    )
   ) {
     score += 10;
   }
@@ -1570,11 +1659,16 @@ function searchScoreForCatalog(
     familyMatch:
       queryFamily === "generic" ||
       materialFamily === "generic" ||
-      queryFamily === materialFamily,
+      queryFamily ===
+        materialFamily,
     queryFamily,
     materialFamily,
   };
 }
+
+/* =========================================================
+   GLOBAL CATALOG SEARCH
+========================================================= */
 
 async function searchEntireCatalog({
   search = "",
@@ -1593,7 +1687,9 @@ async function searchEntireCatalog({
     );
 
   const attributeMap =
-    await loadMaterialAttributes(ids);
+    await loadMaterialAttributes(
+      ids
+    );
 
   const mappings =
     await loadBMGMappings();
@@ -1604,15 +1700,14 @@ async function searchEntireCatalog({
       attributeMap
     );
 
-  /*
-    Create a material -> BMG mapping index.
-  */
-
-  const materialBmgMap = new Map();
+  const materialBmgMap =
+    new Map();
 
   for (const mapping of mappings) {
     const materialId =
-      getMappingMaterialId(mapping);
+      getMappingMaterialId(
+        mapping
+      );
 
     if (
       materialId === null ||
@@ -1622,10 +1717,14 @@ async function searchEntireCatalog({
     }
 
     const code =
-      getBMGCodeFromRow(mapping);
+      getBMGCodeFromRow(
+        mapping
+      );
 
     const bmgId =
-      getBMGIdFromRow(mapping);
+      getBMGIdFromRow(
+        mapping
+      );
 
     if (
       !materialBmgMap.has(
@@ -1648,6 +1747,33 @@ async function searchEntireCatalog({
 
   const results = [];
 
+  const normalizedSearch =
+    normalize(
+      [
+        search,
+        specification,
+        category,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+  const queryTokens =
+    tokenize(
+      normalizedSearch
+    );
+
+  const queryFamily =
+    detectQueryFamily(
+      search,
+      specification,
+      category
+    );
+
+  const simpleFamilySearch =
+    queryTokens.length === 1 &&
+    queryFamily !== "generic";
+
   for (const material of enriched) {
     const ranking =
       searchScoreForCatalog(
@@ -1657,8 +1783,156 @@ async function searchEntireCatalog({
         material
       );
 
-    if (ranking.score <= 0) {
+    const materialFamily =
+      getProductFamily(material);
+
+    /*
+      -------------------------------------------------------
+      IMPORTANT FAMILY SEARCH RULE
+
+      "bearing" MUST return every bearing.
+
+      "valve" MUST return every valve.
+
+      "pump" MUST return every pump.
+
+      We do NOT use the 60% equivalence threshold for this.
+      This endpoint is catalog discovery.
+      -------------------------------------------------------
+    */
+
+    if (
+      simpleFamilySearch
+    ) {
+      if (
+        materialFamily !==
+        queryFamily
+      ) {
+        continue;
+      }
+    }
+
+    const normalizedDescription =
+      normalize(
+        getDescription(material)
+      );
+
+    const normalizedCategory =
+      normalize(
+        getCategory(material)
+      );
+
+    const normalizedFamily =
+      normalize(
+        materialFamily
+      );
+
+    const normalizedSpecifications =
+      normalize(
+        getSpecifications(material)
+      );
+
+    const normalizedTechnicalAttributes =
+      normalize(
+        material?.technical_attributes_text ||
+          ""
+      );
+
+    let directKeywordMatch =
+      false;
+
+    for (const token of queryTokens) {
+      if (
+        normalizedDescription.includes(
+          token
+        ) ||
+        normalizedCategory.includes(
+          token
+        ) ||
+        normalizedFamily.includes(
+          token
+        ) ||
+        normalizedSpecifications.includes(
+          token
+        ) ||
+        normalizedTechnicalAttributes.includes(
+          token
+        )
+      ) {
+        directKeywordMatch = true;
+        break;
+      }
+    }
+
+    const exactPhraseMatch =
+      Boolean(
+        normalizedSearch &&
+        (
+          normalizedDescription.includes(
+            normalizedSearch
+          ) ||
+          normalizedCategory.includes(
+            normalizedSearch
+          ) ||
+          normalizedFamily.includes(
+            normalizedSearch
+          ) ||
+          normalizedSpecifications.includes(
+            normalizedSearch
+          )
+        )
+      );
+
+    if (
+      simpleFamilySearch &&
+      materialFamily === queryFamily
+    ) {
+      directKeywordMatch = true;
+    }
+
+    /*
+      Multi-word searches still need an actual
+      textual match.
+    */
+
+    if (
+      !simpleFamilySearch &&
+      !directKeywordMatch &&
+      !exactPhraseMatch &&
+      ranking.score <= 0
+    ) {
       continue;
+    }
+
+    let catalogScore =
+      ranking.score;
+
+    if (
+      simpleFamilySearch &&
+      materialFamily ===
+        queryFamily
+    ) {
+      catalogScore =
+        Math.max(
+          catalogScore,
+          75
+        );
+    }
+
+    if (exactPhraseMatch) {
+      catalogScore =
+        Math.max(
+          catalogScore,
+          95
+        );
+    } else if (
+      directKeywordMatch
+    ) {
+      catalogScore =
+        Math.max(
+          catalogScore,
+          70
+        );
     }
 
     const id =
@@ -1671,7 +1945,8 @@ async function searchEntireCatalog({
 
     const firstBmg =
       mappingsForMaterial.find(
-        (mapping) => mapping.code
+        (mapping) =>
+          mapping.code
       );
 
     results.push({
@@ -1686,27 +1961,39 @@ async function searchEntireCatalog({
         null,
 
       material_number:
-        getMaterialNumber(material),
+        getMaterialNumber(
+          material
+        ),
 
       description:
-        getDescription(material),
+        getDescription(
+          material
+        ),
 
       specifications:
-        getSpecifications(material),
+        getSpecifications(
+          material
+        ),
 
       category:
-        getCategory(material),
+        getCategory(
+          material
+        ),
 
       bmg_code:
         firstBmg?.code ||
         material?.bmg_code ||
         material?.bmgCode ||
+        material?.ncs_code ||
+        material?.ncsCode ||
         null,
 
       bmg_id:
-        firstBmg?.bmg_id ??
-        material?.bmg_id ??
-        material?.bmgId ??
+        firstBmg?.bmg_id ||
+        material?.bmg_id ||
+        material?.bmgId ||
+        material?.ncs_id ||
+        material?.ncsId ||
         null,
 
       ai_name:
@@ -1738,88 +2025,140 @@ async function searchEntireCatalog({
 
       technical_features:
         material?.technical_features ||
-        getTechnicalFeatureText(material),
+        getTechnicalFeatureText(
+          material
+        ),
 
       similarity:
         Number(
-          ranking.score.toFixed(1)
+          clamp(
+            catalogScore
+          ).toFixed(1)
         ),
 
       product_family:
-        ranking.materialFamily,
+        materialFamily,
 
       query_family:
         ranking.queryFamily,
 
       search_text:
-        buildSearchText(material),
+        buildSearchText(
+          material
+        ),
 
       bmg_search_text:
         [
           firstBmg?.code,
           material?.ai_name,
+          getDescription(
+            material
+          ),
         ]
           .filter(Boolean)
           .join(" "),
 
-      is_equivalent: false,
+      is_equivalent:
+        false,
 
-      technical_match: false,
+      technical_match:
+        false,
 
       classification:
         "CATALOG_SEARCH_RESULT",
 
-      displayable: true,
+      displayable:
+        true,
 
       search_mode:
-        "GLOBAL_CATALOG_SEARCH",
+        "CATALOG_SEARCH",
+
+      catalog_match:
+        true,
+
+      direct_keyword_match:
+        directKeywordMatch,
+
+      exact_phrase_match:
+        exactPhraseMatch,
     });
   }
 
-  /*
-    Sort highest relevance first.
-  */
-
   results.sort(
-    (a, b) =>
-      b.similarity -
-      a.similarity
+    (a, b) => {
+      if (
+        Boolean(
+          b.exact_phrase_match
+        ) !==
+        Boolean(
+          a.exact_phrase_match
+        )
+      ) {
+        return (
+          Number(
+            b.exact_phrase_match
+          ) -
+          Number(
+            a.exact_phrase_match
+          )
+        );
+      }
+
+      if (
+        Boolean(
+          b.direct_keyword_match
+        ) !==
+        Boolean(
+          a.direct_keyword_match
+        )
+      ) {
+        return (
+          Number(
+            b.direct_keyword_match
+          ) -
+          Number(
+            a.direct_keyword_match
+          )
+        );
+      }
+
+      return (
+        b.similarity -
+        a.similarity
+      );
+    }
   );
 
-  /*
-    For a generic family query such as "bearing",
-    return ALL bearing-family records, not only one.
-  */
+  const seenMaterialIds =
+    new Set();
 
-  const queryFamily =
-    detectQueryFamily(
-      search,
-      specification,
-      category
+  const deduplicated =
+    results.filter(
+      (result) => {
+        const key =
+          String(result.id);
+
+        if (
+          seenMaterialIds.has(
+            key
+          )
+        ) {
+          return false;
+        }
+
+        seenMaterialIds.add(
+          key
+        );
+
+        return true;
+      }
     );
 
-  let finalResults = results;
-
-  if (queryFamily !== "generic") {
-    finalResults =
-      results.filter(
-        (result) =>
-          result.product_family ===
-          queryFamily
-      );
-  }
-
-  /*
-    If exact family filtering unexpectedly produces nothing,
-    use the ranked results rather than returning an empty search.
-  */
-
-  if (
-    queryFamily !== "generic" &&
-    finalResults.length === 0
-  ) {
-    finalResults = results;
-  }
+  const finalResults =
+    deduplicated.slice(
+      0,
+      MAX_CATALOG_RESULTS
+    );
 
   return {
     success: true,
@@ -1828,42 +2167,50 @@ async function searchEntireCatalog({
       finalResults.length > 0,
 
     search_mode:
-      "GLOBAL_CATALOG_SEARCH",
+      "CATALOG_SEARCH",
 
     query:
-      search || specification || category,
+      [
+        search,
+        specification,
+        category,
+      ]
+        .filter(Boolean)
+        .join(" "),
 
     total_results:
       finalResults.length,
 
     matches:
-      finalResults.slice(
-        0,
-        MAX_CATALOG_RESULTS
-      ),
+      finalResults,
 
     results:
-      finalResults.slice(
-        0,
-        MAX_CATALOG_RESULTS
-      ),
+      finalResults,
 
     best_match:
-      finalResults[0] || null,
+      finalResults[0] ||
+      null,
 
     data: {
-      search_query: search,
+      search,
+
       specification,
+
       category,
-      query_family: queryFamily,
-      total_results:
+
+      query_family:
+        queryFamily,
+
+      result_count:
         finalResults.length,
 
       results:
-        finalResults.slice(
-          0,
-          MAX_CATALOG_RESULTS
-        ),
+        finalResults,
+
+      message:
+        finalResults.length
+          ? `Found ${finalResults.length} catalog material(s).`
+          : "No catalog materials matched the search.",
     },
   };
 }
@@ -1872,105 +2219,89 @@ async function searchEntireCatalog({
    BMG GROUP SEARCH
 ========================================================= */
 
-/*
-  This function is deliberately defensive because different
-  versions of the project may store BMG data as:
-
-    bmg_materials.bmg_code
-    bmg_materials.ncs_code
-    material_bmg_mapping.bmg_id
-    material_bmg_mapping.ncs_id
-
-  The important part is:
-
-      BMG code
-          ↓
-      BMG record ID
-          ↓
-      material_bmg_mapping
-          ↓
-      materials
-
-  It does NOT assume that the mapping table itself contains
-  the textual BMG code.
-*/
-
-async function searchBMGGroup(bmgCode) {
-  const requestedCode =
-    clean(bmgCode);
-
+async function searchBMGGroup(
+  requestedCode
+) {
   const normalizedRequestedCode =
-    normalizeCode(requestedCode);
+    normalizeCode(
+      requestedCode
+    );
 
-  if (!normalizedRequestedCode) {
+  if (
+    !normalizedRequestedCode
+  ) {
     return {
       success: false,
       matched: false,
-      search_mode: "BMG_GROUP_SEARCH",
-      query: requestedCode,
-      bmg_code: requestedCode,
+      search_mode:
+        "BMG_GROUP_SEARCH",
+      query:
+        requestedCode,
       total_results: 0,
       matches: [],
       results: [],
       best_match: null,
-      data: {
-        bmg_code: requestedCode,
-        total_results: 0,
-        message: "BMG code is empty.",
-      },
+      message:
+        "BMG code is required.",
     };
   }
-
-  /*
-    ---------------------------------------------------------
-    STEP 1
-    Find matching BMG/NCS records.
-    ---------------------------------------------------------
-  */
-
-  const bmgRecords = [];
 
   const bmgTables = [
     "bmg_materials",
     "ncs_materials",
+    "bmg_master",
+    "ncs_master",
   ];
 
-  for (const table of bmgTables) {
+  const mappingTables = [
+    "material_bmg_mapping",
+    "material_ncs_mapping",
+    "bmg_materials",
+  ];
+
+  const bmgRecords = [];
+
+  for (
+    const table of bmgTables
+  ) {
     try {
-      const { data, error } =
+      const {
+        data,
+        error,
+      } =
         await supabase
           .from(table)
           .select("*")
-          .limit(MAX_CATALOG_RESULTS);
+          .limit(
+            MAX_CATALOG_RESULTS
+          );
 
-      if (error || !data?.length) {
+      if (
+        error ||
+        !data?.length
+      ) {
         continue;
       }
 
-      for (const row of data) {
-        const possibleCodes = unique([
-          row?.bmg_code,
-          row?.bmgCode,
-          row?.ncs_code,
-          row?.ncsCode,
-          row?.standard_code,
-          row?.standardCode,
-          row?.code,
-          row?.material_code,
-          row?.materialCode,
-        ]);
-
-        const matched =
-          possibleCodes.some(
-            (code) =>
-              normalizeCode(code) ===
-              normalizedRequestedCode
+      for (
+        const row of data
+      ) {
+        const code =
+          getBMGCodeFromRow(
+            row
           );
 
-        if (matched) {
+        if (
+          code &&
+          normalizeCode(
+            code
+          ) ===
+            normalizedRequestedCode
+        ) {
           bmgRecords.push({
             ...row,
-            _bmg_table: table,
+            _bmg_table:
+              table,
           });
         }
       }
@@ -1979,49 +2310,58 @@ async function searchBMGGroup(bmgCode) {
     }
   }
 
-  /*
-    ---------------------------------------------------------
-    STEP 2
-    Find mappings that reference the BMG record.
-    ---------------------------------------------------------
-  */
+  const bmgIds =
+    unique(
+      bmgRecords
+        .map(
+          getBMGIdFromRow
+        )
+        .filter(
+          (value) =>
+            value !==
+              null &&
+            value !==
+              undefined
+        )
+        .map(String)
+    );
 
   const mappingRows = [];
 
-  const mappingTables = [
-    "material_bmg_mapping",
-    "material_ncs_mapping",
-  ];
-
-  const bmgIds = unique(
-    bmgRecords
-      .map(getBMGIdFromRow)
-      .filter(
-        (value) =>
-          value !== null &&
-          value !== undefined
-      )
-      .map(String)
-  );
-
-  for (const table of mappingTables) {
+  for (
+    const table of mappingTables
+  ) {
     try {
-      const { data, error } =
+      const {
+        data,
+        error,
+      } =
         await supabase
           .from(table)
           .select("*")
-          .limit(MAX_CATALOG_RESULTS);
+          .limit(
+            MAX_CATALOG_RESULTS
+          );
 
-      if (error || !data?.length) {
+      if (
+        error ||
+        !data?.length
+      ) {
         continue;
       }
 
-      for (const row of data) {
+      for (
+        const row of data
+      ) {
         const rowBmgId =
-          getBMGIdFromRow(row);
+          getBMGIdFromRow(
+            row
+          );
 
         const rowCode =
-          getBMGCodeFromRow(row);
+          getBMGCodeFromRow(
+            row
+          );
 
         const idMatch =
           rowBmgId !== null &&
@@ -2032,13 +2372,19 @@ async function searchBMGGroup(bmgCode) {
 
         const codeMatch =
           rowCode &&
-          normalizeCode(rowCode) ===
+          normalizeCode(
+            rowCode
+          ) ===
             normalizedRequestedCode;
 
-        if (idMatch || codeMatch) {
+        if (
+          idMatch ||
+          codeMatch
+        ) {
           mappingRows.push({
             ...row,
-            _mapping_table: table,
+            _mapping_table:
+              table,
           });
         }
       }
@@ -2047,19 +2393,15 @@ async function searchBMGGroup(bmgCode) {
     }
   }
 
-  /*
-    ---------------------------------------------------------
-    STEP 3
-    Some projects may have bmg_materials rows that directly
-    contain material IDs. Handle that too.
-    ---------------------------------------------------------
-  */
-
   const directMaterialIds = [];
 
-  for (const row of bmgRecords) {
+  for (
+    const row of bmgRecords
+  ) {
     const directId =
-      getMappingMaterialId(row);
+      getMappingMaterialId(
+        row
+      );
 
     if (
       directId !== null &&
@@ -2071,100 +2413,33 @@ async function searchBMGGroup(bmgCode) {
     }
   }
 
-  /*
-    ---------------------------------------------------------
-    STEP 4
-    Collect material IDs from mapping rows.
-    ---------------------------------------------------------
-  */
+  const materialIds =
+    unique([
+      ...mappingRows
+        .map(
+          getMappingMaterialId
+        )
+        .filter(
+          (value) =>
+            value !== null &&
+            value !== undefined
+        )
+        .map(String),
 
-  const materialIds = unique([
-    ...mappingRows
-      .map(getMappingMaterialId)
-      .filter(
-        (value) =>
-          value !== null &&
-          value !== undefined
-      )
-      .map(String),
-
-    ...directMaterialIds,
-  ]);
-
-  /*
-    ---------------------------------------------------------
-    STEP 5
-    Fallback:
-    Search mapping tables by BMG code even if there was no
-    BMG master record.
-    ---------------------------------------------------------
-  */
-
-  if (!mappingRows.length) {
-    for (const table of mappingTables) {
-      try {
-        const { data, error } =
-          await supabase
-            .from(table)
-            .select("*")
-            .limit(MAX_CATALOG_RESULTS);
-
-        if (error || !data?.length) {
-          continue;
-        }
-
-        for (const row of data) {
-          const rowCode =
-            getBMGCodeFromRow(row);
-
-          if (
-            rowCode &&
-            normalizeCode(rowCode) ===
-              normalizedRequestedCode
-          ) {
-            mappingRows.push({
-              ...row,
-              _mapping_table: table,
-            });
-
-            const materialId =
-              getMappingMaterialId(row);
-
-            if (
-              materialId !== null &&
-              materialId !== undefined
-            ) {
-              materialIds.push(
-                String(materialId)
-              );
-            }
-          }
-        }
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  /*
-    ---------------------------------------------------------
-    STEP 6
-    Load all materials if IDs are still missing.
-    This is important for schemas where bmg_id is stored
-    directly on materials.
-    ---------------------------------------------------------
-  */
+      ...directMaterialIds,
+    ]);
 
   let materials = [];
 
-  if (materialIds.length) {
+  if (
+    materialIds.length
+  ) {
     const numericIds =
       materialIds
-        .map((id) => Number(id))
-        .filter(Number.isFinite);
-
-    const stringIds =
-      materialIds;
+        .map(Number)
+        .filter(
+          Number.isFinite
+        );
 
     try {
       let query =
@@ -2172,22 +2447,32 @@ async function searchBMGGroup(bmgCode) {
           .from("materials")
           .select("*");
 
-      if (numericIds.length) {
-        query = query.in(
-          "id",
-          numericIds
-        );
+      if (
+        numericIds.length
+      ) {
+        query =
+          query.in(
+            "id",
+            numericIds
+          );
       } else {
-        query = query.in(
-          "id",
-          stringIds
-        );
+        query =
+          query.in(
+            "id",
+            materialIds
+          );
       }
 
-      const { data, error } =
+      const {
+        data,
+        error,
+      } =
         await query;
 
-      if (!error && data) {
+      if (
+        !error &&
+        data
+      ) {
         materials = data;
       }
     } catch {
@@ -2195,121 +2480,56 @@ async function searchBMGGroup(bmgCode) {
     }
   }
 
-  /*
-    ---------------------------------------------------------
-    STEP 7
-    Direct material lookup by bmg_id / bmg_code.
-    ---------------------------------------------------------
-  */
-
-  if (!materials.length) {
+  if (
+    !materials.length
+  ) {
     const allMaterials =
       await loadAllMaterials();
 
     materials =
-      allMaterials.filter((material) => {
-        const materialBmgId =
-          material?.bmg_id ??
-          material?.bmgId ??
-          material?.ncs_id ??
-          material?.ncsId;
+      allMaterials.filter(
+        (material) => {
+          const materialBmgId =
+            material?.bmg_id ??
+            material?.bmgId ??
+            material?.ncs_id ??
+            material?.ncsId;
 
-        const materialCode =
-          material?.bmg_code ??
-          material?.bmgCode ??
-          material?.ncs_code ??
-          material?.ncsCode;
-
-        const idMatch =
-          bmgIds.length &&
-          materialBmgId !== null &&
-          materialBmgId !== undefined &&
-          bmgIds.includes(
-            String(materialBmgId)
-          );
-
-        const codeMatch =
-          materialCode &&
-          normalizeCode(materialCode) ===
-            normalizedRequestedCode;
-
-        return (
-          Boolean(idMatch) ||
-          Boolean(codeMatch)
-        );
-      });
-  }
-
-  /*
-    ---------------------------------------------------------
-    STEP 8
-    If still nothing, inspect all BMG/NCS records and
-    material mappings one final time by textual reference.
-    ---------------------------------------------------------
-  */
-
-  if (!materials.length) {
-    const allMaterials =
-      await loadAllMaterials();
-
-    const allMappings = [];
-
-    for (const table of mappingTables) {
-      try {
-        const { data, error } =
-          await supabase
-            .from(table)
-            .select("*")
-            .limit(MAX_CATALOG_RESULTS);
-
-        if (!error && data) {
-          allMappings.push(...data);
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    const matchingMappingMaterialIds =
-      allMappings
-        .filter((row) => {
-          const code =
-            getBMGCodeFromRow(row);
+          const materialCode =
+            material?.bmg_code ??
+            material?.bmgCode ??
+            material?.ncs_code ??
+            material?.ncsCode;
 
           return (
-            code &&
-            normalizeCode(code) ===
-              normalizedRequestedCode
+            (
+              materialBmgId !==
+                null &&
+              materialBmgId !==
+                undefined &&
+              bmgIds.includes(
+                String(
+                  materialBmgId
+                )
+              )
+            ) ||
+            (
+              materialCode &&
+              normalizeCode(
+                materialCode
+              ) ===
+                normalizedRequestedCode
+            )
           );
-        })
-        .map(getMappingMaterialId)
-        .filter(
-          (id) =>
-            id !== null &&
-            id !== undefined
-        )
-        .map(String);
-
-    if (matchingMappingMaterialIds.length) {
-      materials =
-        allMaterials.filter((material) =>
-          matchingMappingMaterialIds.includes(
-            String(getMaterialId(material))
-          )
-        );
-    }
+        }
+      );
   }
-
-  /*
-    ---------------------------------------------------------
-    STEP 9
-    Enrich materials.
-    ---------------------------------------------------------
-  */
 
   const ids =
     materials
-      .map(getMaterialId)
+      .map(
+        getMaterialId
+      )
       .filter(
         (id) =>
           id !== null &&
@@ -2317,7 +2537,9 @@ async function searchBMGGroup(bmgCode) {
       );
 
   const attributeMap =
-    await loadMaterialAttributes(ids);
+    await loadMaterialAttributes(
+      ids
+    );
 
   const enriched =
     enrichMaterials(
@@ -2325,173 +2547,204 @@ async function searchBMGGroup(bmgCode) {
       attributeMap
     );
 
-  /*
-    ---------------------------------------------------------
-    STEP 10
-    Build final BMG-group result.
-    ---------------------------------------------------------
-  */
+  const results =
+    enriched.map(
+      (material) => {
+        const materialId =
+          getMaterialId(
+            material
+          );
 
-  const results = enriched.map(
-    (material) => {
-      const materialId =
-        getMaterialId(material);
-
-      const mapping =
-        mappingRows.find(
-          (row) =>
-            String(
-              getMappingMaterialId(row)
-            ) ===
-            String(materialId)
-        );
-
-      const bmgRecord =
-        bmgRecords.find((row) => {
-          const id =
-            getBMGIdFromRow(row);
-
-          return (
-            id !== null &&
-            id !== undefined &&
-            mapping &&
-            String(id) ===
+        const mapping =
+          mappingRows.find(
+            (row) =>
               String(
-                getBMGIdFromRow(mapping)
+                getMappingMaterialId(
+                  row
+                )
+              ) ===
+              String(
+                materialId
               )
           );
-        });
 
-      const resolvedCode =
-        getBMGCodeFromRow(mapping) ||
-        getBMGCodeFromRow(bmgRecord) ||
-        requestedCode;
+        const bmgRecord =
+          bmgRecords.find(
+            (row) => {
+              const id =
+                getBMGIdFromRow(
+                  row
+                );
 
-      return {
-        id: materialId,
+              return (
+                id !== null &&
+                id !== undefined &&
+                mapping &&
+                String(id) ===
+                  String(
+                    getBMGIdFromRow(
+                      mapping
+                    )
+                  )
+              );
+            }
+          );
 
-        company:
-          getCompany(material),
+       const resolvedCode =
+  getBMGCodeFromRow(mapping) ||
+  getBMGCodeFromRow(bmgRecord) ||
+  getBMGCodeFromRow(material) ||
+  requestedCode;
 
-        company_id:
-          material?.company_id ??
-          material?.companyId ??
-          null,
+        return {
+          id:
+            materialId,
 
-        material_number:
-          getMaterialNumber(material),
+          company:
+            getCompany(
+              material
+            ),
 
-        description:
-          getDescription(material),
+          company_id:
+            material?.company_id ??
+            material?.companyId ??
+            null,
 
-        specifications:
-          getSpecifications(material),
+          material_number:
+            getMaterialNumber(
+              material
+            ),
 
-        category:
-          getCategory(material),
+          description:
+            getDescription(
+              material
+            ),
 
-        bmg_code:
-          resolvedCode,
+          specifications:
+            getSpecifications(
+              material
+            ),
 
-        bmg_id:
-          getBMGIdFromRow(mapping) ??
-          getBMGIdFromRow(bmgRecord) ??
-          material?.bmg_id ??
-          material?.bmgId ??
-          null,
+          category:
+            getCategory(
+              material
+            ),
 
-        ai_name:
-          material?.ai_name ||
-          material?.aiName ||
-          null,
-
-        bmg_status:
-          material?.bmg_status ||
-          material?.bmgStatus ||
-          bmgRecord?.status ||
-          null,
-
-        ai_confidence:
-          material?.ai_confidence ??
-          material?.aiConfidence ??
-          null,
-
-        match_status:
-          material?.match_status ||
-          material?.matchStatus ||
-          null,
-
-        verified: Boolean(
-          material?.verified ??
-          material?.is_verified ??
-          false
-        ),
-
-        technical_features:
-          material?.technical_features ||
-          getTechnicalFeatureText(material),
-
-        similarity: 100,
-
-        product_family:
-          getProductFamily(material),
-
-        query_family:
-          getProductFamily(material),
-
-        search_text:
-          buildSearchText(material),
-
-        bmg_search_text:
-          [
+          bmg_code:
             resolvedCode,
-            material?.ai_name,
-            material?.description,
-          ]
-            .filter(Boolean)
-            .join(" "),
 
-        is_equivalent: true,
+          bmg_id:
+            getBMGIdFromRow(
+              mapping
+            ) ??
+            getBMGIdFromRow(
+              bmgRecord
+            ) ??
+            material?.bmg_id ??
+            material?.bmgId ??
+            null,
 
-        technical_match: true,
+          ai_name:
+            material?.ai_name ||
+            material?.aiName ||
+            null,
 
-        classification:
-          "BMG_GROUP_MEMBER",
+          bmg_status:
+            material?.bmg_status ||
+            material?.bmgStatus ||
+            bmgRecord?.status ||
+            null,
 
-        displayable: true,
+          ai_confidence:
+            material?.ai_confidence ??
+            material?.aiConfidence ??
+            null,
 
-        search_mode:
-          "BMG_GROUP_SEARCH",
-      };
-    }
-  );
+          match_status:
+            material?.match_status ||
+            material?.matchStatus ||
+            null,
 
-  /*
-    Remove duplicate material IDs.
-  */
+          verified:
+            Boolean(
+              material?.verified ??
+              material?.is_verified ??
+              false
+            ),
 
-  const seen =
-    new Set();
+          technical_features:
+            material?.technical_features ||
+            getTechnicalFeatureText(
+              material
+            ),
+
+          similarity: 100,
+
+          product_family:
+            getProductFamily(
+              material
+            ),
+
+          query_family:
+            getProductFamily(
+              material
+            ),
+
+          search_text:
+            buildSearchText(
+              material
+            ),
+
+          bmg_search_text:
+            [
+              resolvedCode,
+              material?.ai_name,
+              material?.description,
+            ]
+              .filter(Boolean)
+              .join(" "),
+
+          is_equivalent: true,
+
+          technical_match: true,
+
+          classification:
+            "BMG_GROUP_MEMBER",
+
+          displayable: true,
+
+          search_mode:
+            "BMG_GROUP_SEARCH",
+        };
+      }
+    );
+
+  const seen = new Set();
 
   const deduplicated =
-    results.filter((result) => {
-      const key =
-        String(result.id);
+    results.filter(
+      (result) => {
+        const key =
+          String(result.id);
 
-      if (seen.has(key)) {
-        return false;
+        if (
+          seen.has(key)
+        ) {
+          return false;
+        }
+
+        seen.add(key);
+
+        return true;
       }
-
-      seen.add(key);
-
-      return true;
-    });
+    );
 
   return {
     success: true,
 
     matched:
-      deduplicated.length > 0,
+      deduplicated.length >
+      0,
 
     search_mode:
       "BMG_GROUP_SEARCH",
@@ -2512,7 +2765,8 @@ async function searchBMGGroup(bmgCode) {
       deduplicated,
 
     best_match:
-      deduplicated[0] || null,
+      deduplicated[0] ||
+      null,
 
     data: {
       bmg_code:
@@ -2539,11 +2793,12 @@ async function searchBMGGroup(bmgCode) {
 }
 
 /* =========================================================
-   AI TECHNICAL REVIEW
+   GEMINI JSON EXTRACTION
 ========================================================= */
 
 function extractGeminiJson(text) {
-  const source = clean(text);
+  const source =
+    clean(text);
 
   if (!source) {
     return null;
@@ -2555,10 +2810,13 @@ function extractGeminiJson(text) {
     );
 
   const candidate =
-    fenced?.[1] || source;
+    fenced?.[1] ||
+    source;
 
   try {
-    return JSON.parse(candidate);
+    return JSON.parse(
+      candidate
+    );
   } catch {
     const objectMatch =
       candidate.match(
@@ -2579,141 +2837,169 @@ function extractGeminiJson(text) {
   }
 }
 
+/* =========================================================
+   GEMINI TECHNICAL REVIEW
+========================================================= */
+
 async function callGeminiTechnicalReview(
   source,
-  candidate
+  candidates
 ) {
   if (!ai) {
     return null;
   }
 
-  const sourceFamily =
-    getProductFamily(source);
+  if (!candidates.length) {
+    return null;
+  }
 
-  const candidateFamily =
-    getProductFamily(candidate);
+  const sourcePayload = {
+    id: getMaterialId(source),
+    company: getCompany(source),
+    material_number:
+      getMaterialNumber(source),
+    description:
+      getDescription(source),
+    category:
+      getCategory(source),
+    specifications:
+      getSpecifications(source),
+    product_family:
+      getProductFamily(source),
+    technical_features:
+      getTechnicalFeatureText(source),
+  };
 
-  const sourceFeatures =
-    getTechnicalFeatureText(source);
+  const candidatePayload =
+    candidates.map(
+      (candidate) => ({
+        id:
+          getMaterialId(
+            candidate
+          ),
 
-  const candidateFeatures =
-    getTechnicalFeatureText(candidate);
+        company:
+          getCompany(
+            candidate
+          ),
 
-  const conflict =
-    hasCriticalConflict(
-      source,
-      candidate
+        material_number:
+          getMaterialNumber(
+            candidate
+          ),
+
+        description:
+          getDescription(
+            candidate
+          ),
+
+        category:
+          getCategory(
+            candidate
+          ),
+
+        specifications:
+          getSpecifications(
+            candidate
+          ),
+
+        product_family:
+          getProductFamily(
+            candidate
+          ),
+
+        technical_features:
+          getTechnicalFeatureText(
+            candidate
+          ),
+      })
     );
 
   const prompt = `
-You are an industrial engineering harmonization reviewer.
+You are a technical material-equivalence reviewer.
 
-Your task is to compare TWO material records and determine whether
-they are technically equivalent/interchangeable candidates.
+Your job is to compare ONE source industrial material
+against candidate materials from other companies.
 
 IMPORTANT RULES:
 
-1. Compare engineering function and technical characteristics.
-2. Do NOT use company material numbers as proof of equivalence.
-3. Do NOT treat textual similarity alone as equivalence.
-4. Product family must be compatible.
-5. Explicit critical conflicts must block equivalence.
-6. Missing specifications are UNKNOWN, not compatible by assumption.
-7. Bearing housing is NOT automatically equivalent to a rolling bearing.
-8. Different bearing designations such as 6205 and 6305 must not be treated
-   as equivalent merely because both are bearings.
-9. Different pressure classes such as PN16 and PN40 must not be treated
-   as equivalent unless engineering evidence explicitly supports it.
-10. Different materials such as SS304 and SS316 must be treated as a
-    potential critical conflict.
-11. Different voltages such as 230V and 415V must be treated as a critical
-    conflict.
-12. The result must be explainable.
-13. A Gemini outage must never be interpreted as equivalence.
+1. Compare technical specifications, not company material numbers.
+2. Same product family is necessary for strong equivalence.
+3. Critical differences must prevent equivalence.
+4. Bearing 6205 and bearing 6305 are NOT equivalent.
+5. PN16 and PN40 are NOT equivalent where pressure rating matters.
+6. SS304 and SS316 are NOT automatically equivalent.
+7. 230V and 415V are NOT equivalent.
+8. Different dimensions that affect interchangeability are NOT equivalent.
+9. Do not invent missing specifications.
+10. Gemini is only a reviewer. The deterministic technical engine remains authoritative.
+11. If candidates are technically equivalent, they should belong to the same BMG standard group.
 
-SOURCE MATERIAL:
+SOURCE:
+${JSON.stringify(
+  sourcePayload,
+  null,
+  2
+)}
 
-Company:
-${getCompany(source)}
+CANDIDATES:
+${JSON.stringify(
+  candidatePayload,
+  null,
+  2
+)}
 
-Material number:
-${getMaterialNumber(source)}
-
-Description:
-${getDescription(source)}
-
-Category:
-${getCategory(source)}
-
-Product family:
-${sourceFamily}
-
-Technical information:
-${sourceFeatures}
-
-CANDIDATE MATERIAL:
-
-Company:
-${getCompany(candidate)}
-
-Material number:
-${getMaterialNumber(candidate)}
-
-Description:
-${getDescription(candidate)}
-
-Category:
-${getCategory(candidate)}
-
-Product family:
-${candidateFamily}
-
-Technical information:
-${candidateFeatures}
-
-Deterministic conflict check:
-${JSON.stringify(conflict)}
-
-Return ONLY valid JSON in this structure:
+Return ONLY valid JSON in this format:
 
 {
-  "technically_equivalent": true,
-  "confidence": 0,
-  "relationship": "exact|near|functional|non-equivalent|unknown",
-  "critical_conflict": false,
-  "reason": "short engineering explanation",
-  "matching_features": [],
-  "conflicting_features": [],
-  "missing_features": [],
-  "human_review_required": true
+  "matches": [
+    {
+      "candidate_id": 123,
+      "technical_equivalence": true,
+      "confidence": 92,
+      "reason": "..."
+    }
+  ]
 }
-
-Use confidence from 0 to 100.
 `;
 
-  for (const model of GEMINI_MODELS) {
+  for (
+    const model of GEMINI_MODELS
+  ) {
     try {
       const response =
-        await ai.models.generateContent({
-          model,
-          contents: prompt,
-        });
+        await ai.models.generateContent(
+          {
+            model,
+            contents: prompt,
+          }
+        );
 
       const text =
         response?.text ||
-        response?.response?.text ||
+        response?.candidates?.[0]
+          ?.content?.parts?.[0]
+          ?.text ||
         "";
 
       const parsed =
-        extractGeminiJson(text);
+        extractGeminiJson(
+          text
+        );
 
-      if (parsed) {
+      if (
+        parsed &&
+        Array.isArray(
+          parsed.matches
+        )
+      ) {
         return parsed;
       }
-    } catch {
-      /*
-        Try next Gemini model.
-      */
+    } catch (error) {
+      console.warn(
+        `Gemini technical review failed with ${model}:`,
+        error?.message
+      );
     }
   }
 
@@ -2721,30 +3007,52 @@ Use confidence from 0 to 100.
 }
 
 /* =========================================================
-   TECHNICAL MATCH EXECUTION
+   MATERIAL TECHNICAL MATCH
 ========================================================= */
 
 async function runMaterialTechnicalMatch(
   materialId,
   matchCount = FINAL_CANDIDATE_COUNT,
-  matchThreshold = MIN_DISPLAY_SIMILARITY / 100
+  matchThreshold = 0.60
 ) {
-  /*
-    ---------------------------------------------------------
-    Load source.
-    ---------------------------------------------------------
-  */
+  const numericMaterialId =
+    Number(materialId);
 
-  const { data: sourceMaterial, error } =
+  if (
+    !Number.isFinite(
+      numericMaterialId
+    )
+  ) {
+    return {
+      success: false,
+      matched: false,
+      message:
+        "Invalid material ID.",
+      matches: [],
+      results: [],
+      total_results: 0,
+      best_match: null,
+    };
+  }
+
+  const {
+    data: sourceMaterial,
+    error: sourceError,
+  } =
     await supabase
       .from("materials")
       .select("*")
-      .eq("id", materialId)
+      .eq(
+        "id",
+        numericMaterialId
+      )
       .maybeSingle();
 
-  if (error) {
+  if (
+    sourceError
+  ) {
     throw new Error(
-      `Unable to load source material: ${error.message}`
+      `Unable to load source material: ${sourceError.message}`
     );
   }
 
@@ -2753,26 +3061,22 @@ async function runMaterialTechnicalMatch(
       success: false,
       matched: false,
       message:
-        `Material ${materialId} was not found.`,
-      total_results: 0,
+        "Material not found.",
       matches: [],
       results: [],
+      total_results: 0,
       best_match: null,
     };
   }
 
-  /*
-    ---------------------------------------------------------
-    Load catalog.
-    ---------------------------------------------------------
-  */
-
-  const materials =
+  const allMaterials =
     await loadAllMaterials();
 
-  const ids =
-    materials
-      .map(getMaterialId)
+  const allIds =
+    allMaterials
+      .map(
+        getMaterialId
+      )
       .filter(
         (id) =>
           id !== null &&
@@ -2780,517 +3084,755 @@ async function runMaterialTechnicalMatch(
       );
 
   const attributeMap =
-    await loadMaterialAttributes(ids);
+    await loadMaterialAttributes(
+      allIds
+    );
 
-  const enriched =
+  const enrichedMaterials =
     enrichMaterials(
-      materials,
+      allMaterials,
       attributeMap
     );
 
   const source =
-    enrichMaterial(
-      sourceMaterial,
-      attributeMap[
-        getMaterialId(sourceMaterial)
-      ] || []
+    enrichedMaterials.find(
+      (material) =>
+        String(
+          getMaterialId(
+            material
+          )
+        ) ===
+        String(
+          numericMaterialId
+        )
+    );
+
+  if (!source) {
+    return {
+      success: false,
+      matched: false,
+      message:
+        "Unable to enrich source material.",
+      matches: [],
+      results: [],
+      total_results: 0,
+      best_match: null,
+    };
+  }
+
+  const sourceCompany =
+    normalize(
+      getCompany(source)
     );
 
   const candidates = [];
 
-  /*
-    ---------------------------------------------------------
-    Deterministic engineering scoring.
-    ---------------------------------------------------------
-  */
-
-  for (const candidate of enriched) {
-    const candidateId =
-      getMaterialId(candidate);
-
+  for (
+    const candidate of enrichedMaterials
+  ) {
     if (
-      candidateId === null ||
-      candidateId === undefined
+      String(
+        getMaterialId(
+          candidate
+        )
+      ) ===
+      String(
+        numericMaterialId
+      )
     ) {
       continue;
     }
 
+    const candidateCompany =
+      normalize(
+        getCompany(
+          candidate
+        )
+      );
+
+    /*
+      Same-company records are not useful for
+      cross-company equivalence.
+    */
+
     if (
-      String(candidateId) ===
-      String(materialId)
+      sourceCompany &&
+      candidateCompany &&
+      sourceCompany ===
+        candidateCompany
     ) {
       continue;
     }
 
-    const scoreResult =
+    const technical =
       calculateFeatureScore(
         source,
         candidate
       );
 
-    if (scoreResult.conflict) {
-      continue;
-    }
-
     if (
-      scoreResult.score <
-      MIN_DISPLAY_SIMILARITY
+      technical.conflict ||
+      technical.score <
+        MIN_DISPLAY_SIMILARITY
     ) {
       continue;
     }
 
     candidates.push({
-      candidate,
-      scoreResult,
+      material:
+        candidate,
+
+      technical_score:
+        technical.score,
+
+      technical_reason:
+        technical.reason,
+
+      technical_conflict:
+        technical.conflict,
     });
   }
-
-  /*
-    Sort deterministic technical candidates.
-  */
 
   candidates.sort(
     (a, b) =>
-      b.scoreResult.score -
-      a.scoreResult.score
+      b.technical_score -
+      a.technical_score
   );
 
-  /*
-    ---------------------------------------------------------
-    Limit candidates per company so one company's giant
-    catalog cannot completely dominate the result.
-    ---------------------------------------------------------
-  */
-
-  const companyCounts =
-    new Map();
-
-  const balancedCandidates = [];
-
-  for (const item of candidates) {
-    const company =
-      getCompany(item.candidate) ||
-      "UNKNOWN";
-
-    const count =
-      companyCounts.get(company) || 0;
-
-    if (
-      count >=
-      MAX_CANDIDATES_PER_COMPANY
-    ) {
-      continue;
-    }
-
-    companyCounts.set(
-      company,
-      count + 1
+  const limitedCandidates =
+    candidates.slice(
+      0,
+      Math.min(
+        Number(matchCount) ||
+          FINAL_CANDIDATE_COUNT,
+        100
+      )
     );
 
-    balancedCandidates.push(item);
-
-    if (
-      balancedCandidates.length >=
-      Number(matchCount || FINAL_CANDIDATE_COUNT)
-    ) {
-      break;
-    }
-  }
-
   /*
-    ---------------------------------------------------------
-    Gemini technical review.
-    ---------------------------------------------------------
+    Gemini is optional.
+
+    If Gemini is unavailable, the deterministic
+    technical engine still returns the result.
   */
 
-  const finalMatches = [];
+  let geminiReview =
+    null;
 
-  for (const item of balancedCandidates) {
-    const candidate =
-      item.candidate;
-
-    const deterministic =
-      item.scoreResult;
-
-    let aiReview = null;
-
-    if (
-      deterministic.score >=
-      MIN_AI_APPROVAL_CONFIDENCE
-    ) {
-      aiReview =
-        await callGeminiTechnicalReview(
-          source,
-          candidate
-        );
-    }
-
-    /*
-      Gemini failure must NOT break the deterministic engine.
-    */
-
-    let finalScore =
-      deterministic.score;
-
-    let technicallyEquivalent =
-      deterministic.score >=
-      MIN_DISPLAY_SIMILARITY;
-
-    let relationship =
-      technicallyEquivalent
-        ? "near"
-        : "non-equivalent";
-
-    let criticalConflict =
-      false;
-
-    let reason =
-      deterministic.reason;
-
-    let humanReviewRequired =
-      true;
-
-    let matchingFeatures = [];
-
-    let conflictingFeatures = [];
-
-    let missingFeatures = [];
-
-    if (aiReview) {
-      const aiConfidence =
-        Number(
-          aiReview.confidence
-        );
-
-      if (
-        Number.isFinite(aiConfidence)
-      ) {
-        finalScore =
-          clamp(
-            deterministic.score * 0.60 +
-              aiConfidence * 0.40
-          );
-      }
-
-      criticalConflict =
-        Boolean(
-          aiReview.critical_conflict
-        );
-
-      if (criticalConflict) {
-        technicallyEquivalent = false;
-        finalScore = 0;
-      } else {
-        technicallyEquivalent =
-          Boolean(
-            aiReview.technically_equivalent
-          ) &&
-          finalScore >=
-            MIN_DISPLAY_SIMILARITY;
-      }
-
-      relationship =
-        clean(
-          aiReview.relationship
-        ) ||
-        relationship;
-
-      reason =
-        clean(
-          aiReview.reason
-        ) ||
-        reason;
-
-      humanReviewRequired =
-        aiReview.human_review_required !==
-        false;
-
-      matchingFeatures =
-        Array.isArray(
-          aiReview.matching_features
-        )
-          ? aiReview.matching_features
-          : [];
-
-      conflictingFeatures =
-        Array.isArray(
-          aiReview.conflicting_features
-        )
-          ? aiReview.conflicting_features
-          : [];
-
-      missingFeatures =
-        Array.isArray(
-          aiReview.missing_features
-        )
-          ? aiReview.missing_features
-          : [];
-    }
-
-    /*
-      Final safety rule:
-      deterministic critical conflict always wins.
-    */
-
-    const deterministicConflict =
-      hasCriticalConflict(
+  try {
+    geminiReview =
+      await callGeminiTechnicalReview(
         source,
-        candidate
+        limitedCandidates.map(
+          (item) =>
+            item.material
+        )
       );
+  } catch (error) {
+    console.warn(
+      "Gemini review unavailable:",
+      error?.message
+    );
 
-    if (deterministicConflict.conflict) {
-      criticalConflict = true;
-      technicallyEquivalent = false;
-      finalScore = 0;
-
-      reason =
-        deterministicConflict.reason;
-    }
-
-    if (
-      finalScore <
-      MIN_DISPLAY_SIMILARITY
-    ) {
-      technicallyEquivalent = false;
-    }
-
-    finalMatches.push({
-      id:
-        getMaterialId(candidate),
-
-      company:
-        getCompany(candidate),
-
-      company_id:
-        candidate?.company_id ??
-        candidate?.companyId ??
-        null,
-
-      material_number:
-        getMaterialNumber(candidate),
-
-      description:
-        getDescription(candidate),
-
-      specifications:
-        getSpecifications(candidate),
-
-      category:
-        getCategory(candidate),
-
-      bmg_code:
-        candidate?.bmg_code ??
-        candidate?.bmgCode ??
-        null,
-
-      bmg_id:
-        candidate?.bmg_id ??
-        candidate?.bmgId ??
-        null,
-
-      ai_name:
-        candidate?.ai_name ??
-        candidate?.aiName ??
-        null,
-
-      bmg_status:
-        candidate?.bmg_status ??
-        candidate?.bmgStatus ??
-        null,
-
-      ai_confidence:
-        candidate?.ai_confidence ??
-        candidate?.aiConfidence ??
-        null,
-
-      match_status:
-        candidate?.match_status ??
-        candidate?.matchStatus ??
-        null,
-
-      verified: Boolean(
-        candidate?.verified ??
-        candidate?.is_verified ??
-        false
-      ),
-
-      technical_features:
-        candidate?.technical_features ||
-        getTechnicalFeatureText(candidate),
-
-      similarity:
-        Number(
-          clamp(finalScore).toFixed(1)
-        ),
-
-      product_family:
-        getProductFamily(candidate),
-
-      source_product_family:
-        getProductFamily(source),
-
-      relationship,
-
-      critical_conflict:
-        criticalConflict,
-
-      human_review_required:
-        humanReviewRequired,
-
-      matching_features:
-        matchingFeatures,
-
-      conflicting_features:
-        conflictingFeatures,
-
-      missing_features:
-        missingFeatures,
-
-      reason,
-
-      is_equivalent:
-        technicallyEquivalent,
-
-      technical_match:
-        technicallyEquivalent,
-
-      classification:
-        technicallyEquivalent
-          ? "TECHNICAL_MATCH"
-          : "TECHNICAL_REVIEW",
-
-      displayable:
-        finalScore >=
-        MIN_DISPLAY_SIMILARITY,
-
-      search_mode:
-        "TECHNICAL_MATCH",
-    });
+    geminiReview = null;
   }
 
-  finalMatches.sort(
+  const geminiMap =
+    new Map();
+
+  if (
+    geminiReview &&
+    Array.isArray(
+      geminiReview.matches
+    )
+  ) {
+    for (
+      const review of
+        geminiReview.matches
+    ) {
+      if (
+        review?.candidate_id !==
+        undefined
+      ) {
+        geminiMap.set(
+          String(
+            review.candidate_id
+          ),
+          review
+        );
+      }
+    }
+  }
+
+  const threshold =
+    clamp(
+      Number(
+        matchThreshold
+      ) || 0.60,
+      0,
+      1
+    ) * 100;
+
+  const results =
+    limitedCandidates
+      .map(
+        (item) => {
+          const candidate =
+            item.material;
+
+          const candidateId =
+            getMaterialId(
+              candidate
+            );
+
+          const review =
+            geminiMap.get(
+              String(
+                candidateId
+              )
+            );
+
+          const deterministicScore =
+            item.technical_score;
+
+          let finalScore =
+            deterministicScore;
+
+          if (
+            review &&
+            Number.isFinite(
+              Number(
+                review.confidence
+              )
+            )
+          ) {
+            /*
+              Gemini may refine confidence, but it
+              cannot override a deterministic critical
+              conflict because conflicting candidates
+              were already removed.
+            */
+
+            finalScore =
+              deterministicScore *
+                0.70 +
+              clamp(
+                Number(
+                  review.confidence
+                ),
+                0,
+                100
+              ) *
+                0.30;
+          }
+
+          finalScore =
+            clamp(
+              finalScore
+            );
+
+          const aiApproved =
+            review
+              ? Boolean(
+                  review.technical_equivalence
+                ) &&
+                Number(
+                  review.confidence
+                ) >=
+                  MIN_AI_APPROVAL_CONFIDENCE
+              : null;
+
+          const technicallyEquivalent =
+            finalScore >=
+              threshold &&
+            (
+              aiApproved ===
+                null ||
+              aiApproved ===
+                true
+            );
+
+          return {
+            id:
+              candidateId,
+
+            company:
+              getCompany(
+                candidate
+              ),
+
+            company_id:
+              candidate?.company_id ??
+              candidate?.companyId ??
+              null,
+
+            material_number:
+              getMaterialNumber(
+                candidate
+              ),
+
+            description:
+              getDescription(
+                candidate
+              ),
+
+            specifications:
+              getSpecifications(
+                candidate
+              ),
+
+            category:
+              getCategory(
+                candidate
+              ),
+
+            bmg_code:
+              candidate?.bmg_code ||
+              candidate?.bmgCode ||
+              candidate?.ncs_code ||
+              candidate?.ncsCode ||
+              null,
+
+            bmg_id:
+              candidate?.bmg_id ??
+              candidate?.bmgId ??
+              candidate?.ncs_id ??
+              candidate?.ncsId ??
+              null,
+
+            ai_name:
+              candidate?.ai_name ||
+              candidate?.aiName ||
+              null,
+
+            bmg_status:
+              candidate?.bmg_status ||
+              candidate?.bmgStatus ||
+              null,
+
+            ai_confidence:
+              review?.confidence ??
+              candidate?.ai_confidence ??
+              candidate?.aiConfidence ??
+              null,
+
+            match_status:
+              candidate?.match_status ||
+              candidate?.matchStatus ||
+              null,
+
+            verified:
+              Boolean(
+                candidate?.verified ??
+                candidate?.is_verified ??
+                false
+              ),
+
+            technical_features:
+              candidate?.technical_features ||
+              getTechnicalFeatureText(
+                candidate
+              ),
+
+            similarity:
+              Number(
+                finalScore.toFixed(
+                  1
+                )
+              ),
+
+            deterministic_similarity:
+              Number(
+                deterministicScore.toFixed(
+                  1
+                )
+              ),
+
+            gemini_confidence:
+              review?.confidence ??
+              null,
+
+            product_family:
+              getProductFamily(
+                candidate
+              ),
+
+            query_family:
+              getProductFamily(
+                source
+              ),
+
+            technical_reason:
+              review?.reason ||
+              item.technical_reason,
+
+            is_equivalent:
+              technicallyEquivalent,
+
+            technical_match:
+              technicallyEquivalent,
+
+            classification:
+              technicallyEquivalent
+                ? "TECHNICAL_MATCH"
+                : "TECHNICAL_CANDIDATE",
+
+            displayable:
+              finalScore >=
+              MIN_DISPLAY_SIMILARITY,
+
+            search_mode:
+              "TECHNICAL_MATCH",
+
+            source_material_id:
+              numericMaterialId,
+
+            source_company:
+              getCompany(
+                source
+              ),
+
+            source_description:
+              getDescription(
+                source
+              ),
+          };
+        }
+      )
+      .filter(
+        (result) =>
+          result.displayable
+      );
+
+  results.sort(
     (a, b) =>
       b.similarity -
       a.similarity
   );
 
-  /*
-    Only display matches at/above threshold.
-  */
-
-  const displayMatches =
-    finalMatches.filter(
-      (match) =>
-        match.similarity >=
-        MIN_DISPLAY_SIMILARITY
-    );
-
   return {
     success: true,
 
     matched:
-      displayMatches.length > 0,
+      results.length > 0,
 
     search_mode:
       "TECHNICAL_MATCH",
 
-    source_material_id:
-      materialId,
+    source_material: {
+      id:
+        getMaterialId(
+          source
+        ),
 
-    query:
-      getDescription(source),
+      company:
+        getCompany(
+          source
+        ),
+
+      material_number:
+        getMaterialNumber(
+          source
+        ),
+
+      description:
+        getDescription(
+          source
+        ),
+
+      specifications:
+        getSpecifications(
+          source
+        ),
+
+      category:
+        getCategory(
+          source
+        ),
+
+      product_family:
+        getProductFamily(
+          source
+        ),
+    },
 
     total_results:
-      displayMatches.length,
+      results.length,
 
     matches:
-      displayMatches,
+      results,
 
     results:
-      displayMatches,
+      results,
 
     best_match:
-      displayMatches[0] || null,
+      results[0] ||
+      null,
 
-    data: {
-      source_material:
-        source,
+    threshold:
+      threshold,
 
-      threshold:
-        MIN_DISPLAY_SIMILARITY,
+    gemini_available:
+      Boolean(
+        geminiReview
+      ),
 
-      match_count:
-        displayMatches.length,
-
-      results:
-        displayMatches,
-    },
+    message:
+      results.length
+        ? `Found ${results.length} technically compatible material(s).`
+        : "No technically compatible material was found above the 60% threshold.",
   };
 }
 
 /* =========================================================
-   EXISTING BMG LOOKUP FOR A MATERIAL
+   FIND EXISTING BMG
 ========================================================= */
 
 async function findExistingBMGForMaterial(
-  materialId
+  material,
+  allMaterials = null
 ) {
-  const tables = [
-    "material_bmg_mapping",
-    "material_ncs_mapping",
-  ];
+  const mappings =
+    await loadBMGMappings();
 
-  for (const table of tables) {
-    try {
-      const { data, error } =
-        await supabase
-          .from(table)
-          .select("*")
-          .eq("material_id", materialId)
-          .limit(20);
+  const materialId =
+    getMaterialId(
+      material
+    );
 
-      if (
-        !error &&
-        data?.length
-      ) {
-        return data[0];
-      }
-    } catch {
-      continue;
-    }
+  /*
+    1. Existing mapping for this material.
+  */
+
+  const directMapping =
+    mappings.find(
+      (mapping) =>
+        String(
+          getMappingMaterialId(
+            mapping
+          )
+        ) ===
+        String(materialId) &&
+        getBMGCodeFromRow(
+          mapping
+        )
+    );
+
+  if (directMapping) {
+    return {
+      bmg_code:
+        getBMGCodeFromRow(
+          directMapping
+        ),
+
+      bmg_id:
+        getBMGIdFromRow(
+          directMapping
+        ),
+
+      source:
+        "existing_material_mapping",
+
+      confidence: 100,
+    };
   }
 
-  try {
-    const { data } =
-      await supabase
-        .from("materials")
-        .select("*")
-        .eq("id", materialId)
-        .maybeSingle();
+  /*
+    2. Check the materials table itself.
+  */
 
-    if (data) {
-      const code =
-        data?.bmg_code ??
-        data?.bmgCode ??
-        data?.ncs_code ??
-        data?.ncsCode;
+  const materialBmgCode =
+    getBMGCodeFromRow(
+      material
+    );
 
-      const id =
-        data?.bmg_id ??
-        data?.bmgId ??
-        data?.ncs_id ??
-        data?.ncsId;
+  if (materialBmgCode) {
+    return {
+      bmg_code:
+        materialBmgCode,
 
-      if (code || id) {
-        return {
-          bmg_code: code || null,
-          bmg_id: id || null,
-          material_id: materialId,
-        };
-      }
+      bmg_id:
+        getBMGIdFromRow(
+          material
+        ),
+
+      source:
+        "material_record",
+
+      confidence: 100,
+    };
+  }
+
+  /*
+    3. Look for technically equivalent materials
+       and reuse their BMG code.
+  */
+
+  const catalog =
+    allMaterials ||
+    (await loadAllMaterials());
+
+  const ids =
+    catalog
+      .map(
+        getMaterialId
+      )
+      .filter(
+        (id) =>
+          id !== null &&
+          id !== undefined
+      );
+
+  const attributeMap =
+    await loadMaterialAttributes(
+      ids
+    );
+
+  const enriched =
+    enrichMaterials(
+      catalog,
+      attributeMap
+    );
+
+  const source =
+    enriched.find(
+      (item) =>
+        String(
+          getMaterialId(
+            item
+          )
+        ) ===
+        String(materialId)
+    ) ||
+    enrichMaterial(
+      material
+    );
+
+  const sourceFamily =
+    getProductFamily(
+      source
+    );
+
+  const candidates = [];
+
+  for (
+    const candidate of enriched
+  ) {
+    if (
+      String(
+        getMaterialId(
+          candidate
+        )
+      ) ===
+      String(materialId)
+    ) {
+      continue;
     }
-  } catch {
-    // Ignore fallback failure.
+
+    if (
+      sourceFamily !==
+        "generic" &&
+      getProductFamily(
+        candidate
+      ) !==
+        sourceFamily
+    ) {
+      continue;
+    }
+
+    const score =
+      calculateFeatureScore(
+        source,
+        candidate
+      );
+
+    if (
+      score.conflict ||
+      score.score <
+        MIN_DISPLAY_SIMILARITY
+    ) {
+      continue;
+    }
+
+    const candidateId =
+      getMaterialId(
+        candidate
+      );
+
+    const candidateMappings =
+      mappings.filter(
+        (mapping) =>
+          String(
+            getMappingMaterialId(
+              mapping
+            )
+          ) ===
+          String(candidateId)
+      );
+
+    const bmgMapping =
+      candidateMappings.find(
+        (mapping) =>
+          getBMGCodeFromRow(
+            mapping
+          )
+      );
+
+    const candidateBmgCode =
+      getBMGCodeFromRow(
+        candidate
+      ) ||
+      getBMGCodeFromRow(
+        bmgMapping
+      );
+
+    if (!candidateBmgCode) {
+      continue;
+    }
+
+    candidates.push({
+      bmg_code:
+        candidateBmgCode,
+
+      bmg_id:
+        getBMGIdFromRow(
+          bmgMapping
+        ) ??
+        getBMGIdFromRow(
+          candidate
+        ),
+
+      similarity:
+        score.score,
+
+      material_id:
+        candidateId,
+
+      company:
+        getCompany(
+          candidate
+        ),
+    });
+  }
+
+  candidates.sort(
+    (a, b) =>
+      b.similarity -
+      a.similarity
+  );
+
+  if (
+    candidates.length
+  ) {
+    return {
+      ...candidates[0],
+
+      source:
+        "technically_equivalent_material",
+
+      confidence:
+        candidates[0].similarity,
+    };
   }
 
   return null;
@@ -3300,7 +3842,9 @@ async function findExistingBMGForMaterial(
    POST
 ========================================================= */
 
-export async function POST(request) {
+export async function POST(
+  request
+) {
   try {
     const body =
       await request.json();
@@ -3308,8 +3852,11 @@ export async function POST(request) {
     const search =
       clean(
         body?.search ??
+        body?.searchText ??
         body?.query ??
         body?.q ??
+        body?.materialName ??
+        body?.description ??
         ""
       );
 
@@ -3331,6 +3878,8 @@ export async function POST(request) {
       clean(
         body?.bmgCode ??
         body?.bmg_code ??
+        body?.bmgIdentity ??
+        body?.bmg_identity ??
         body?.ncsCode ??
         body?.ncs_code ??
         ""
@@ -3356,9 +3905,7 @@ export async function POST(request) {
       );
 
     /*
-      -------------------------------------------------------
-      BMG CODE SEARCH HAS HIGHEST PRIORITY.
-      -------------------------------------------------------
+      BMG GROUP SEARCH
     */
 
     if (bmgCode) {
@@ -3370,10 +3917,7 @@ export async function POST(request) {
     }
 
     /*
-      -------------------------------------------------------
-      FREE-TEXT SEARCH.
-      Search globally across ALL companies.
-      -------------------------------------------------------
+      GLOBAL CATALOG SEARCH
     */
 
     if (
@@ -3391,9 +3935,7 @@ export async function POST(request) {
     }
 
     /*
-      -------------------------------------------------------
-      MATERIAL TECHNICAL MATCH.
-      -------------------------------------------------------
+      TECHNICAL MATERIAL MATCH
     */
 
     if (
@@ -3413,12 +3955,21 @@ export async function POST(request) {
     return NextResponse.json(
       {
         success: false,
+
         matched: false,
+
         message:
-          "Provide search text, specification, category, bmgCode, or materialId.",
+          "Search input is required.",
+
+        notice:
+          "Enter a part name, specification, category, BMG code, or select a material.",
+
         total_results: 0,
+
         matches: [],
+
         results: [],
+
         best_match: null,
       },
       {
@@ -3434,13 +3985,19 @@ export async function POST(request) {
     return NextResponse.json(
       {
         success: false,
+
         matched: false,
+
         error:
           error?.message ||
           "Internal server error.",
+
         total_results: 0,
+
         matches: [],
+
         results: [],
+
         best_match: null,
       },
       {
@@ -3454,15 +4011,30 @@ export async function POST(request) {
    GET
 ========================================================= */
 
-export async function GET(request) {
+export async function GET(
+  request
+) {
   try {
-    const { searchParams } =
-      new URL(request.url);
+    const {
+      searchParams,
+    } = new URL(
+      request.url
+    );
 
     const search =
       clean(
-        searchParams.get("search") ||
-        searchParams.get("query") ||
+        searchParams.get(
+          "search"
+        ) ||
+        searchParams.get(
+          "searchText"
+        ) ||
+        searchParams.get(
+          "query"
+        ) ||
+        searchParams.get(
+          "q"
+        ) ||
         ""
       );
 
@@ -3470,14 +4042,19 @@ export async function GET(request) {
       clean(
         searchParams.get(
           "specification"
-        ) || ""
+        ) ||
+        searchParams.get(
+          "specifications"
+        ) ||
+        ""
       );
 
     const category =
       clean(
         searchParams.get(
           "category"
-        ) || ""
+        ) ||
+        ""
       );
 
     const bmgCode =
@@ -3488,13 +4065,26 @@ export async function GET(request) {
         searchParams.get(
           "bmg_code"
         ) ||
+        searchParams.get(
+          "bmgIdentity"
+        ) ||
+        searchParams.get(
+          "bmg_identity"
+        ) ||
         ""
       );
 
     const materialId =
       searchParams.get(
         "materialId"
+      ) ||
+      searchParams.get(
+        "material_id"
       );
+
+    /*
+      BMG GROUP SEARCH
+    */
 
     if (bmgCode) {
       return NextResponse.json(
@@ -3503,6 +4093,10 @@ export async function GET(request) {
         )
       );
     }
+
+    /*
+      GLOBAL CATALOG SEARCH
+    */
 
     if (
       search ||
@@ -3518,6 +4112,10 @@ export async function GET(request) {
       );
     }
 
+    /*
+      TECHNICAL MATERIAL MATCH
+    */
+
     if (materialId) {
       return NextResponse.json(
         await runMaterialTechnicalMatch(
@@ -3528,20 +4126,23 @@ export async function GET(request) {
       );
     }
 
-    return NextResponse.json(
-      {
-        success: true,
-        message:
-          "AI Match Center API is running.",
-        supported_searches: [
-          "search",
-          "specification",
-          "category",
-          "bmgCode",
-          "materialId",
-        ],
-      }
-    );
+    return NextResponse.json({
+      success: true,
+
+      message:
+        "AI Match Center API is running.",
+
+      supported_searches: [
+        "search",
+        "searchText",
+        "query",
+        "specification",
+        "category",
+        "bmgCode",
+        "bmgIdentity",
+        "materialId",
+      ],
+    });
   } catch (error) {
     console.error(
       "GET /api/match-materials error:",
@@ -3551,9 +4152,18 @@ export async function GET(request) {
     return NextResponse.json(
       {
         success: false,
+
         error:
           error?.message ||
           "Internal server error.",
+
+        total_results: 0,
+
+        matches: [],
+
+        results: [],
+
+        best_match: null,
       },
       {
         status: 500,
