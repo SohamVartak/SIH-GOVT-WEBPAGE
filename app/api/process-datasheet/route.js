@@ -15,7 +15,7 @@ const EMBEDDING_MODEL = "gemini-embedding-2";
 const OUTPUT_DIMENSIONALITY = 768;
 
 /* =========================================================
-   GEMINI CLIENT
+   GEMINI
 ========================================================= */
 
 const ai = new GoogleGenAI({
@@ -23,13 +23,11 @@ const ai = new GoogleGenAI({
 });
 
 /* =========================================================
-   SAFE TEXT HELPERS
+   SAFE HELPERS
 ========================================================= */
 
 function safeText(value) {
-  if (value === null || value === undefined) {
-    return "";
-  }
+  if (value === null || value === undefined) return "";
 
   if (typeof value === "object") {
     try {
@@ -43,9 +41,7 @@ function safeText(value) {
 }
 
 function normalizeValue(value) {
-  if (value === null || value === undefined) {
-    return null;
-  }
+  if (value === null || value === undefined) return null;
 
   const text = String(value)
     .replace(/\s+/g, " ")
@@ -67,37 +63,29 @@ function firstMatch(text, patterns) {
 }
 
 /* =========================================================
-   MATERIAL NUMBER EXTRACTION
+   MATERIAL NUMBER
 ========================================================= */
 
 function extractMaterialNumber(text) {
   return firstMatch(text, [
     /(?:material\s*(?:no|number|code)|material\s*id)\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
-
     /(?:item\s*(?:no|number|code))\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
-
     /(?:part\s*(?:no|number|code))\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
-
     /(?:sap\s*(?:no|number|code))\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
-
     /(?:catalogue\s*(?:no|number|code))\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
-
     /(?:catalog\s*(?:no|number|code))\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
   ]);
 }
 
 /* =========================================================
-   DESCRIPTION EXTRACTION
+   DESCRIPTION
 ========================================================= */
 
 function extractDescription(text) {
   const value = firstMatch(text, [
     /(?:material\s*description|description)\s*[:\-]\s*(.+)/i,
-
     /(?:item\s*description)\s*[:\-]\s*(.+)/i,
-
     /(?:product\s*description)\s*[:\-]\s*(.+)/i,
-
     /(?:equipment\s*description)\s*[:\-]\s*(.+)/i,
   ]);
 
@@ -117,22 +105,11 @@ function extractDescription(text) {
 }
 
 /* =========================================================
-   CATEGORY DETECTION
+   CATEGORY
 ========================================================= */
 
 function detectCategory(text) {
   const lower = text.toLowerCase();
-
-  /*
-   * IMPORTANT:
-   * Valve is intentionally checked BEFORE sealing terms.
-   *
-   * A valve datasheet can contain words such as:
-   * seal, gasket, packing, seat, etc.
-   *
-   * Therefore those words must not cause the whole item
-   * to be classified as "Sealing".
-   */
 
   if (
     lower.includes("check valve") ||
@@ -222,12 +199,6 @@ function detectCategory(text) {
     return "Filtration";
   }
 
-  /*
-   * Sealing is checked after Valve so that valve
-   * datasheets containing "seal" or "gasket" don't
-   * get misclassified.
-   */
-
   if (
     lower.includes("o-ring") ||
     lower.includes("o ring") ||
@@ -243,7 +214,7 @@ function detectCategory(text) {
 }
 
 /* =========================================================
-   ENGINEERING ATTRIBUTE EXTRACTION
+   ENGINEERING ATTRIBUTES
 ========================================================= */
 
 function buildAttributes(
@@ -256,266 +227,113 @@ function buildAttributes(
 
   const attributes = {
     material_number: materialNumber,
-
-    description: description,
-
-    category: category,
-
+    description,
+    category,
     material_family: category,
 
     dimensions: null,
-
     material_grade: null,
-
     pressure_rating: null,
-
     temperature_rating: null,
-
     standards: null,
-
     manufacturer: null,
-
     model: null,
-
     design_features: null,
-
     size: null,
-
     thickness: null,
-
     hardness: null,
-
     color: null,
-
     application: null,
-
     other_attributes: null,
   };
 
-  /* =======================================================
-     DIMENSIONS
-  ======================================================= */
+  attributes.dimensions = firstMatch(text, [
+    /(?:dimensions?)\s*[:\-]\s*(.{1,300})/i,
+    /(?:dimension\s*details)\s*[:\-]\s*(.{1,300})/i,
+    /(?:dim)\.?\s*[:\-]\s*(.{1,300})/i,
+  ]);
 
-  attributes.dimensions =
-    firstMatch(
-      text,
-      [
-        /(?:dimensions?)\s*[:\-]\s*(.{1,300})/i,
+  attributes.material_grade = firstMatch(text, [
+    /(?:material\s*grade|material|grade)\s*[:\-]\s*(.{1,150})/i,
+    /(?:material\s*specification)\s*[:\-]\s*(.{1,150})/i,
+    /(?:material\s*type)\s*[:\-]\s*(.{1,150})/i,
+  ]);
 
-        /(?:dimension\s*details)\s*[:\-]\s*(.{1,300})/i,
+  attributes.pressure_rating = firstMatch(text, [
+    /(?:pressure\s*(?:rating|class))\s*[:\-]?\s*(.{1,100})/i,
+    /(?:working\s*pressure)\s*[:\-]?\s*(.{1,100})/i,
+    /(?:rated\s*pressure)\s*[:\-]?\s*(.{1,100})/i,
+    /\b(Class\s*[0-9A-Z/-]+)\b/i,
+  ]);
 
-        /(?:dim)\.?\s*[:\-]\s*(.{1,300})/i,
-      ]
-    );
+  attributes.temperature_rating = firstMatch(text, [
+    /(?:temperature\s*(?:rating|range))\s*[:\-]?\s*(.{1,120})/i,
+    /(?:working\s*temperature)\s*[:\-]?\s*(.{1,120})/i,
+    /(?:operating\s*temperature)\s*[:\-]?\s*(.{1,120})/i,
+    /(?:rated\s*temperature)\s*[:\-]?\s*(.{1,120})/i,
+  ]);
 
-  /* =======================================================
-     MATERIAL / GRADE
-  ======================================================= */
+  attributes.standards = firstMatch(text, [
+    /(?:standard|standards)\s*[:\-]\s*(.{1,300})/i,
+    /(?:specification|specifications)\s*[:\-]\s*(.{1,300})/i,
+    /\b(ISO\s*[0-9][0-9A-Z./-]*)\b/i,
+    /\b(ASTM\s*[A-Z0-9./-]+)\b/i,
+    /\b(ASME\s*[A-Z0-9./-]+)\b/i,
+    /\b(API\s*[0-9A-Z./-]+)\b/i,
+    /\b(DIN\s*[A-Z0-9./-]+)\b/i,
+    /\b(BS\s*[A-Z0-9./-]+)\b/i,
+    /\b(IS\s*[A-Z0-9./-]+)\b/i,
+  ]);
 
-  attributes.material_grade =
-    firstMatch(
-      text,
-      [
-        /(?:material\s*grade|material|grade)\s*[:\-]\s*(.{1,150})/i,
+  attributes.manufacturer = firstMatch(text, [
+    /(?:manufacturer|make|manufacturer\s*name)\s*[:\-]\s*(.{1,200})/i,
+    /(?:manufactured\s*by)\s*[:\-]\s*(.{1,200})/i,
+    /(?:brand)\s*[:\-]\s*(.{1,200})/i,
+  ]);
 
-        /(?:material\s*specification)\s*[:\-]\s*(.{1,150})/i,
+  attributes.model = firstMatch(text, [
+    /(?:model|model\s*no|model\s*number)\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
+    /(?:type|type\s*no|type\s*number)\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
+  ]);
 
-        /(?:material\s*type)\s*[:\-]\s*(.{1,150})/i,
-      ]
-    );
+  attributes.size = firstMatch(text, [
+    /(?:size|nominal\s*size|nominal\s*diameter|dn)\s*[:#-]?\s*([A-Z0-9./xX -]+)/i,
+    /\b(DN\s*[0-9]+)\b/i,
+    /\b(NPS\s*[0-9./]+)\b/i,
+  ]);
 
-  /* =======================================================
-     PRESSURE
-  ======================================================= */
+  attributes.thickness = firstMatch(text, [
+    /(?:thickness|wall\s*thickness)\s*[:\-]?\s*([0-9.]+\s*(?:mm|cm|in|inch)?)\b/i,
+  ]);
 
-  attributes.pressure_rating =
-    firstMatch(
-      text,
-      [
-        /(?:pressure\s*(?:rating|class))\s*[:\-]?\s*(.{1,100})/i,
+  attributes.hardness = firstMatch(text, [
+    /(?:hardness)\s*[:\-]?\s*(.{1,80})/i,
+  ]);
 
-        /(?:working\s*pressure)\s*[:\-]?\s*(.{1,100})/i,
+  attributes.color = firstMatch(text, [
+    /(?:colour|color)\s*[:\-]\s*(.{1,80})/i,
+  ]);
 
-        /(?:rated\s*pressure)\s*[:\-]?\s*(.{1,100})/i,
+  attributes.application = firstMatch(text, [
+    /(?:application|service|usage|used\s*for)\s*[:\-]\s*(.{1,250})/i,
+    /(?:intended\s*use)\s*[:\-]\s*(.{1,250})/i,
+  ]);
 
-        /\b(Class\s*[0-9A-Z/-]+)\b/i,
-      ]
-    );
-
-  /* =======================================================
-     TEMPERATURE
-  ======================================================= */
-
-  attributes.temperature_rating =
-    firstMatch(
-      text,
-      [
-        /(?:temperature\s*(?:rating|range))\s*[:\-]?\s*(.{1,120})/i,
-
-        /(?:working\s*temperature)\s*[:\-]?\s*(.{1,120})/i,
-
-        /(?:operating\s*temperature)\s*[:\-]?\s*(.{1,120})/i,
-
-        /(?:rated\s*temperature)\s*[:\-]?\s*(.{1,120})/i,
-      ]
-    );
-
-  /* =======================================================
-     STANDARDS
-  ======================================================= */
-
-  attributes.standards =
-    firstMatch(
-      text,
-      [
-        /(?:standard|standards)\s*[:\-]\s*(.{1,300})/i,
-
-        /(?:specification|specifications)\s*[:\-]\s*(.{1,300})/i,
-
-        /\b(ISO\s*[0-9][0-9A-Z./-]*)\b/i,
-
-        /\b(ASTM\s*[A-Z0-9./-]+)\b/i,
-
-        /\b(ASME\s*[A-Z0-9./-]+)\b/i,
-
-        /\b(API\s*[0-9A-Z./-]+)\b/i,
-
-        /\b(DIN\s*[A-Z0-9./-]+)\b/i,
-
-        /\b(BS\s*[A-Z0-9./-]+)\b/i,
-
-        /\b(IS\s*[A-Z0-9./-]+)\b/i,
-      ]
-    );
-
-  /* =======================================================
-     MANUFACTURER
-  ======================================================= */
-
-  attributes.manufacturer =
-    firstMatch(
-      text,
-      [
-        /(?:manufacturer|make|manufacturer\s*name)\s*[:\-]\s*(.{1,200})/i,
-
-        /(?:manufactured\s*by)\s*[:\-]\s*(.{1,200})/i,
-
-        /(?:brand)\s*[:\-]\s*(.{1,200})/i,
-      ]
-    );
-
-  /* =======================================================
-     MODEL
-  ======================================================= */
-
-  attributes.model =
-    firstMatch(
-      text,
-      [
-        /(?:model|model\s*no|model\s*number)\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
-
-        /(?:type|type\s*no|type\s*number)\s*[:#-]?\s*([A-Z0-9._/-]+)/i,
-      ]
-    );
-
-  /* =======================================================
-     SIZE
-  ======================================================= */
-
-  attributes.size =
-    firstMatch(
-      text,
-      [
-        /(?:size|nominal\s*size|nominal\s*diameter|dn)\s*[:#-]?\s*([A-Z0-9./xX -]+)/i,
-
-        /\b(DN\s*[0-9]+)\b/i,
-
-        /\b(NPS\s*[0-9./]+)\b/i,
-      ]
-    );
-
-  /* =======================================================
-     THICKNESS
-  ======================================================= */
-
-  attributes.thickness =
-    firstMatch(
-      text,
-      [
-        /(?:thickness|wall\s*thickness)\s*[:\-]?\s*([0-9.]+\s*(?:mm|cm|in|inch)?)\b/i,
-      ]
-    );
-
-  /* =======================================================
-     HARDNESS
-  ======================================================= */
-
-  attributes.hardness =
-    firstMatch(
-      text,
-      [
-        /(?:hardness)\s*[:\-]?\s*(.{1,80})/i,
-      ]
-    );
-
-  /* =======================================================
-     COLOR
-  ======================================================= */
-
-  attributes.color =
-    firstMatch(
-      text,
-      [
-        /(?:colour|color)\s*[:\-]\s*(.{1,80})/i,
-      ]
-    );
-
-  /* =======================================================
-     APPLICATION
-  ======================================================= */
-
-  attributes.application =
-    firstMatch(
-      text,
-      [
-        /(?:application|service|usage|used\s*for)\s*[:\-]\s*(.{1,250})/i,
-
-        /(?:intended\s*use)\s*[:\-]\s*(.{1,250})/i,
-      ]
-    );
-
-  /* =======================================================
-     DESIGN FEATURES
-  ======================================================= */
-
-  attributes.design_features =
-    firstMatch(
-      text,
-      [
-        /(?:design\s*features)\s*[:\-]\s*(.{1,300})/i,
-
-        /(?:features)\s*[:\-]\s*(.{1,300})/i,
-
-        /(?:construction)\s*[:\-]\s*(.{1,300})/i,
-      ]
-    );
-
-  /* =======================================================
-     AUTOMATIC MATERIAL GRADE DETECTION
-  ======================================================= */
+  attributes.design_features = firstMatch(text, [
+    /(?:design\s*features)\s*[:\-]\s*(.{1,300})/i,
+    /(?:features)\s*[:\-]\s*(.{1,300})/i,
+    /(?:construction)\s*[:\-]\s*(.{1,300})/i,
+  ]);
 
   if (
     !attributes.material_grade &&
     (
       lower.includes("ss304") ||
       lower.includes("ss 304") ||
-      lower.includes(
-        "stainless steel 304"
-      )
+      lower.includes("stainless steel 304")
     )
   ) {
-    attributes.material_grade =
-      "SS304";
+    attributes.material_grade = "SS304";
   }
 
   if (
@@ -523,13 +341,10 @@ function buildAttributes(
     (
       lower.includes("ss316") ||
       lower.includes("ss 316") ||
-      lower.includes(
-        "stainless steel 316"
-      )
+      lower.includes("stainless steel 316")
     )
   ) {
-    attributes.material_grade =
-      "SS316";
+    attributes.material_grade = "SS316";
   }
 
   if (
@@ -539,141 +354,64 @@ function buildAttributes(
       lower.includes("ss316l")
     )
   ) {
-    attributes.material_grade =
-      "SS316L";
+    attributes.material_grade = "SS316L";
   }
 
   if (
     !attributes.material_grade &&
-    lower.includes(
-      "carbon steel"
-    )
+    lower.includes("carbon steel")
   ) {
-    attributes.material_grade =
-      "Carbon Steel";
+    attributes.material_grade = "Carbon Steel";
   }
 
   if (
     !attributes.material_grade &&
-    lower.includes(
-      "alloy steel"
-    )
+    lower.includes("alloy steel")
   ) {
-    attributes.material_grade =
-      "Alloy Steel";
+    attributes.material_grade = "Alloy Steel";
   }
 
   if (
     !attributes.material_grade &&
-    lower.includes(
-      "cast iron"
-    )
+    lower.includes("cast iron")
   ) {
-    attributes.material_grade =
-      "Cast Iron";
+    attributes.material_grade = "Cast Iron";
   }
 
-  /* =======================================================
-     RAW TEXT
-  ======================================================= */
-
-  attributes.other_attributes =
-    text
-      .slice(0, 15000)
-      .trim();
+  attributes.other_attributes = text
+    .slice(0, 15000)
+    .trim();
 
   return attributes;
 }
 
 /* =========================================================
-   BUILD EMBEDDING SEARCH TEXT
+   SEARCH TEXT
 ========================================================= */
 
-function buildSearchText(
-  material,
-  detail
-) {
+function buildSearchText(material, detail) {
   return [
-    `company: ${safeText(
-      material.company
-    )}`,
-
-    `material number: ${safeText(
-      material.material_number
-    )}`,
-
-    `description: ${safeText(
-      material.description
-    )}`,
-
-    `category: ${safeText(
-      material.category
-    )}`,
-
-    `specifications: ${safeText(
-      material.specifications
-    )}`,
-
-    `material family: ${safeText(
-      detail?.material_family
-    )}`,
-
-    `dimensions: ${safeText(
-      detail?.dimensions
-    )}`,
-
-    `material grade: ${safeText(
-      detail?.material_grade
-    )}`,
-
-    `pressure rating: ${safeText(
-      detail?.pressure_rating
-    )}`,
-
-    `temperature rating: ${safeText(
-      detail?.temperature_rating
-    )}`,
-
-    `standards: ${safeText(
-      detail?.standards
-    )}`,
-
-    `manufacturer: ${safeText(
-      detail?.manufacturer
-    )}`,
-
-    `model: ${safeText(
-      detail?.model
-    )}`,
-
-    `design features: ${safeText(
-      detail?.design_features
-    )}`,
-
-    `size: ${safeText(
-      detail?.size
-    )}`,
-
-    `thickness: ${safeText(
-      detail?.thickness
-    )}`,
-
-    `hardness: ${safeText(
-      detail?.hardness
-    )}`,
-
-    `application: ${safeText(
-      detail?.application
-    )}`,
-
-    `other attributes: ${safeText(
-      detail?.other_attributes
-    )}`,
+    `company: ${safeText(material.company)}`,
+    `material number: ${safeText(material.material_number)}`,
+    `description: ${safeText(material.description)}`,
+    `category: ${safeText(material.category)}`,
+    `specifications: ${safeText(material.specifications)}`,
+    `material family: ${safeText(detail?.material_family)}`,
+    `dimensions: ${safeText(detail?.dimensions)}`,
+    `material grade: ${safeText(detail?.material_grade)}`,
+    `pressure rating: ${safeText(detail?.pressure_rating)}`,
+    `temperature rating: ${safeText(detail?.temperature_rating)}`,
+    `standards: ${safeText(detail?.standards)}`,
+    `manufacturer: ${safeText(detail?.manufacturer)}`,
+    `model: ${safeText(detail?.model)}`,
+    `design features: ${safeText(detail?.design_features)}`,
+    `size: ${safeText(detail?.size)}`,
+    `thickness: ${safeText(detail?.thickness)}`,
+    `hardness: ${safeText(detail?.hardness)}`,
+    `application: ${safeText(detail?.application)}`,
+    `other attributes: ${safeText(detail?.other_attributes)}`,
   ]
-    .filter(
-      (value) =>
-        value.trim() !== ""
-    )
+    .filter((value) => value.trim() !== "")
     .join("\n");
 }
 
@@ -681,32 +419,21 @@ function buildSearchText(
    GEMINI EMBEDDING
 ========================================================= */
 
-async function generateEmbedding(
-  searchText
-) {
-  const response =
-    await ai.models.embedContent({
-      model:
-        EMBEDDING_MODEL,
-
-      contents:
-        searchText,
-
-      config: {
-        outputDimensionality:
-          OUTPUT_DIMENSIONALITY,
-      },
-    });
+async function generateEmbedding(searchText) {
+  const response = await ai.models.embedContent({
+    model: EMBEDDING_MODEL,
+    contents: searchText,
+    config: {
+      outputDimensionality: OUTPUT_DIMENSIONALITY,
+    },
+  });
 
   const values =
-    response
-      ?.embeddings?.[0]
-      ?.values;
+    response?.embeddings?.[0]?.values;
 
   if (
     !Array.isArray(values) ||
-    values.length !==
-      OUTPUT_DIMENSIONALITY
+    values.length !== OUTPUT_DIMENSIONALITY
   ) {
     throw new Error(
       `Invalid embedding returned. Expected ${OUTPUT_DIMENSIONALITY} dimensions.`
@@ -725,21 +452,13 @@ async function updateDatasheet(
   datasheetId,
   values
 ) {
-  const {
-    error,
-  } =
-    await supabase
-      .from("datasheets")
-      .update({
-        ...values,
-
-        updated_at:
-          new Date().toISOString(),
-      })
-      .eq(
-        "datasheet_id",
-        datasheetId
-      );
+  const { error } = await supabase
+    .from("datasheets")
+    .update({
+      ...values,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("datasheet_id", datasheetId);
 
   if (error) {
     console.error(
@@ -750,20 +469,413 @@ async function updateDatasheet(
 }
 
 /* =========================================================
-   MAIN POST ROUTE
+   STORAGE PATH NORMALIZATION
 ========================================================= */
 
-export async function POST(
-  request
+/*
+ * This is the important fix.
+ *
+ * storage_path can sometimes contain:
+ *
+ * 1. file.pdf
+ * 2. folder/file.pdf
+ * 3. bucket/folder/file.pdf
+ * 4. https://....supabase.co/storage/v1/object/...
+ * 5. /storage/v1/object/public/bucket/file.pdf
+ *
+ * Supabase .download() wants only the object path.
+ */
+
+function normalizeStorageReference(
+  bucket,
+  storagePath
 ) {
+  let cleanBucket = String(bucket || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+
+  let cleanPath = String(storagePath || "")
+    .trim()
+    .replace(/\\/g, "/");
+
+  const references = [];
+
+  if (!cleanPath) {
+    return {
+      bucket: cleanBucket,
+      paths: [],
+    };
+  }
+
+  /* =======================================================
+     FULL URL
+  ======================================================= */
+
+  if (
+    cleanPath.startsWith("http://") ||
+    cleanPath.startsWith("https://")
+  ) {
+    try {
+      const url = new URL(cleanPath);
+
+      const marker = "/storage/v1/object/";
+
+      const index =
+        url.pathname.indexOf(marker);
+
+      if (index !== -1) {
+        let remainder =
+          url.pathname.slice(
+            index + marker.length
+          );
+
+        remainder =
+          remainder.replace(
+            /^\/+/,
+            ""
+          );
+
+        const parts =
+          remainder.split("/");
+
+        if (
+          parts.length >= 2 &&
+          (
+            parts[0] === "public" ||
+            parts[0] === "authenticated" ||
+            parts[0] === "sign"
+          )
+        ) {
+          parts.shift();
+        }
+
+        if (parts.length >= 2) {
+          const urlBucket =
+            decodeURIComponent(parts.shift());
+
+          const urlPath =
+            parts
+              .map((part) =>
+                decodeURIComponent(part)
+              )
+              .join("/");
+
+          if (urlBucket) {
+            cleanBucket = urlBucket;
+          }
+
+          if (urlPath) {
+            references.push(urlPath);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(
+        "Could not parse storage URL:",
+        error
+      );
+    }
+  }
+
+  /* =======================================================
+     REMOVE QUERY STRING
+  ======================================================= */
+
+  cleanPath =
+    cleanPath.split("?")[0];
+
+  cleanPath =
+    cleanPath.replace(/^\/+/, "");
+
+  /* =======================================================
+     STORAGE API PATH
+  ======================================================= */
+
+  const objectMarkers = [
+    "/storage/v1/object/public/",
+    "/storage/v1/object/authenticated/",
+    "/storage/v1/object/sign/",
+  ];
+
+  for (const marker of objectMarkers) {
+    const index =
+      cleanPath.indexOf(marker);
+
+    if (index !== -1) {
+      const remainder =
+        cleanPath.slice(
+          index + marker.length
+        );
+
+      const parts =
+        remainder.split("/");
+
+      if (parts.length >= 2) {
+        const parsedBucket =
+          parts.shift();
+
+        const parsedPath =
+          parts.join("/");
+
+        if (parsedBucket) {
+          cleanBucket = parsedBucket;
+        }
+
+        if (parsedPath) {
+          references.push(parsedPath);
+        }
+      }
+    }
+  }
+
+  /* =======================================================
+     NORMAL PATH
+  ======================================================= */
+
+  if (cleanPath) {
+    references.push(cleanPath);
+
+    /*
+     * If the database accidentally stored:
+     *
+     * bucket/folder/file.pdf
+     *
+     * also try:
+     *
+     * folder/file.pdf
+     */
+    const bucketPrefix =
+      `${cleanBucket}/`;
+
+    if (
+      cleanPath.startsWith(
+        bucketPrefix
+      )
+    ) {
+      references.push(
+        cleanPath.slice(
+          bucketPrefix.length
+        )
+      );
+    }
+  }
+
+  /* =======================================================
+     REMOVE DUPLICATES
+  ======================================================= */
+
+  const uniquePaths = [
+    ...new Set(
+      references
+        .map((path) =>
+          String(path)
+            .trim()
+            .replace(/^\/+/, "")
+        )
+        .filter(Boolean)
+    ),
+  ];
+
+  return {
+    bucket: cleanBucket,
+    paths: uniquePaths,
+  };
+}
+
+/* =========================================================
+   DOWNLOAD PDF FROM STORAGE
+========================================================= */
+
+async function downloadPdfFromStorage(
+  supabase,
+  bucket,
+  storagePath
+) {
+  const {
+    bucket: normalizedBucket,
+    paths,
+  } =
+    normalizeStorageReference(
+      bucket,
+      storagePath
+    );
+
+  if (!normalizedBucket) {
+    throw new Error(
+      "Supabase Storage bucket is empty."
+    );
+  }
+
+  if (!paths.length) {
+    throw new Error(
+      "Supabase Storage path is empty."
+    );
+  }
+
+  console.log(
+    "Storage download configuration:",
+    {
+      bucket: normalizedBucket,
+      paths,
+    }
+  );
+
+  const errors = [];
+
+  /* =======================================================
+     METHOD 1 — DIRECT DOWNLOAD
+  ======================================================= */
+
+  for (const path of paths) {
+    try {
+      console.log(
+        `Trying Supabase Storage download: bucket="${normalizedBucket}", path="${path}"`
+      );
+
+      const {
+        data,
+        error,
+      } =
+        await supabase.storage
+          .from(normalizedBucket)
+          .download(path);
+
+      if (!error && data) {
+        console.log(
+          `PDF downloaded successfully from "${normalizedBucket}/${path}"`
+        );
+
+        return data;
+      }
+
+      if (error) {
+        errors.push(
+          `download(${path}): ${error.message}`
+        );
+
+        console.warn(
+          `Storage download failed for "${path}":`,
+          error.message
+        );
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : String(error);
+
+      errors.push(
+        `download(${path}): ${message}`
+      );
+
+      console.warn(
+        `Storage download exception for "${path}":`,
+        message
+      );
+    }
+  }
+
+  /* =======================================================
+     METHOD 2 — SIGNED URL
+  ======================================================= */
+
+  for (const path of paths) {
+    try {
+      console.log(
+        `Trying signed URL for "${normalizedBucket}/${path}"`
+      );
+
+      const {
+        data: signedData,
+        error: signedError,
+      } =
+        await supabase.storage
+          .from(normalizedBucket)
+          .createSignedUrl(
+            path,
+            300
+          );
+
+      if (
+        signedError ||
+        !signedData?.signedUrl
+      ) {
+        errors.push(
+          `signedUrl(${path}): ${
+            signedError?.message ||
+            "No signed URL returned"
+          }`
+        );
+
+        continue;
+      }
+
+      const response =
+        await fetch(
+          signedData.signedUrl
+        );
+
+      if (!response.ok) {
+        errors.push(
+          `fetchSignedUrl(${path}): HTTP ${response.status}`
+        );
+
+        continue;
+      }
+
+      const blob =
+        await response.blob();
+
+      if (
+        blob &&
+        blob.size > 0
+      ) {
+        console.log(
+          `PDF downloaded successfully using signed URL for "${path}"`
+        );
+
+        return blob;
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : String(error);
+
+      errors.push(
+        `signedUrl(${path}): ${message}`
+      );
+    }
+  }
+
+  /* =======================================================
+     FINAL ERROR
+  ======================================================= */
+
+  throw new Error(
+    [
+      `Unable to download PDF from Supabase Storage.`,
+      `Bucket: ${normalizedBucket}`,
+      `Original path: ${storagePath}`,
+      `Attempted paths: ${paths.join(" | ")}`,
+      `Storage errors: ${errors.join(" || ")}`,
+    ].join(" ")
+  );
+}
+
+/* =========================================================
+   MAIN POST
+========================================================= */
+
+export async function POST(request) {
   let authSupabase = null;
   let adminSupabase = null;
   let datasheetId = null;
 
   try {
-    /* =====================================================
-       ENVIRONMENT VALIDATION
-    ===================================================== */
+    /* =======================================================
+       ENVIRONMENT
+    ======================================================= */
 
     const supabaseUrl =
       process.env
@@ -804,9 +916,9 @@ export async function POST(
       );
     }
 
-    /* =====================================================
-       AUTHENTICATION
-    ===================================================== */
+    /* =======================================================
+       AUTH
+    ======================================================= */
 
     const cookieStore =
       await cookies();
@@ -821,9 +933,7 @@ export async function POST(
               return cookieStore.getAll();
             },
 
-            setAll(
-              cookiesToSet
-            ) {
+            setAll(cookiesToSet) {
               try {
                 cookiesToSet.forEach(
                   ({
@@ -850,8 +960,7 @@ export async function POST(
       data: {
         user,
       },
-      error:
-        authError,
+      error: authError,
     } =
       await authSupabase.auth.getUser();
 
@@ -862,7 +971,6 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-
           error:
             "Authentication required.",
         },
@@ -872,9 +980,9 @@ export async function POST(
       );
     }
 
-    /* =====================================================
-       SERVICE ROLE CLIENT
-    ===================================================== */
+    /* =======================================================
+       ADMIN CLIENT
+    ======================================================= */
 
     adminSupabase =
       createClient(
@@ -882,25 +990,20 @@ export async function POST(
         serviceRoleKey,
         {
           auth: {
-            autoRefreshToken:
-              false,
-
-            persistSession:
-              false,
+            autoRefreshToken: false,
+            persistSession: false,
           },
         }
       );
 
-    /* =====================================================
+    /* =======================================================
        REQUEST BODY
-    ===================================================== */
+    ======================================================= */
 
     const body =
       await request
         .json()
-        .catch(
-          () => ({})
-        );
+        .catch(() => ({}));
 
     datasheetId =
       Number(
@@ -911,13 +1014,11 @@ export async function POST(
       !Number.isInteger(
         datasheetId
       ) ||
-      datasheetId <=
-        0
+      datasheetId <= 0
     ) {
       return NextResponse.json(
         {
           success: false,
-
           error:
             "A valid datasheetId is required.",
         },
@@ -927,14 +1028,17 @@ export async function POST(
       );
     }
 
-    /* =====================================================
+    console.log(
+      `Starting processing for datasheet ${datasheetId}`
+    );
+
+    /* =======================================================
        LOAD DATASHEET
-    ===================================================== */
+    ======================================================= */
 
     const {
       data: datasheet,
-      error:
-        datasheetError,
+      error: datasheetError,
     } =
       await adminSupabase
         .from("datasheets")
@@ -943,22 +1047,24 @@ export async function POST(
           "datasheet_id",
           datasheetId
         )
-        .single();
+        .maybeSingle();
 
     if (
-      datasheetError ||
-      !datasheet
+      datasheetError
     ) {
+      throw new Error(
+        `Datasheet lookup failed: ${datasheetError.message}`
+      );
+    }
+
+    if (!datasheet) {
       return NextResponse.json(
         {
           success: false,
-
           error:
             "Datasheet not found.",
-
-          details:
-            datasheetError?.message ||
-            null,
+          datasheet_id:
+            datasheetId,
         },
         {
           status: 404,
@@ -966,9 +1072,25 @@ export async function POST(
       );
     }
 
-    /* =====================================================
+    console.log(
+      "Datasheet storage information:",
+      {
+        datasheet_id:
+          datasheet.datasheet_id,
+        file_name:
+          datasheet.file_name,
+        original_file_name:
+          datasheet.original_file_name,
+        storage_bucket:
+          datasheet.storage_bucket,
+        storage_path:
+          datasheet.storage_path,
+      }
+    );
+
+    /* =======================================================
        PROCESSING START
-    ===================================================== */
+    ======================================================= */
 
     await updateDatasheet(
       adminSupabase,
@@ -985,49 +1107,54 @@ export async function POST(
       }
     );
 
-    /* =====================================================
+    /* =======================================================
        STORAGE VALIDATION
-    ===================================================== */
+    ======================================================= */
 
     if (
-      !datasheet.storage_bucket ||
+      !datasheet.storage_bucket
+    ) {
+      throw new Error(
+        `Datasheet ${datasheetId} has no storage_bucket value.`
+      );
+    }
+
+    if (
       !datasheet.storage_path
     ) {
       throw new Error(
-        "Datasheet has no storage bucket or storage path."
+        `Datasheet ${datasheetId} has no storage_path value.`
       );
     }
 
-    /* =====================================================
+    /* =======================================================
        DOWNLOAD PDF
-    ===================================================== */
+    ======================================================= */
 
-    const {
-      data: pdfFile,
-      error:
-        downloadError,
-    } =
-      await adminSupabase.storage
-        .from(
-          datasheet.storage_bucket
-        )
-        .download(
-          datasheet.storage_path
-        );
+    console.log(
+      `Downloading PDF for datasheet ${datasheetId}...`
+    );
 
-    if (
-      downloadError ||
-      !pdfFile
-    ) {
+    const pdfFile =
+      await downloadPdfFromStorage(
+        adminSupabase,
+        datasheet.storage_bucket,
+        datasheet.storage_path
+      );
+
+    if (!pdfFile) {
       throw new Error(
-        downloadError?.message ||
-          "Unable to download PDF from Supabase Storage."
+        "Storage returned no PDF file."
       );
     }
 
-    /* =====================================================
+    /* =======================================================
        PDF EXTRACTION
-    ===================================================== */
+    ======================================================= */
+
+    console.log(
+      `Extracting PDF text for datasheet ${datasheetId}...`
+    );
 
     const buffer =
       new Uint8Array(
@@ -1038,8 +1165,7 @@ export async function POST(
       await extractText(
         buffer,
         {
-          mergePages:
-            true,
+          mergePages: true,
         }
       );
 
@@ -1058,9 +1184,9 @@ export async function POST(
       `Extracted ${text.length} characters from datasheet ${datasheetId}`
     );
 
-    /* =====================================================
+    /* =======================================================
        MATERIAL INFORMATION
-    ===================================================== */
+    ======================================================= */
 
     const extractedMaterialNumber =
       extractMaterialNumber(
@@ -1102,10 +1228,6 @@ export async function POST(
         text
       );
 
-    console.log(
-      `Detected category: ${category}`
-    );
-
     const attributes =
       buildAttributes(
         text,
@@ -1114,9 +1236,17 @@ export async function POST(
         category
       );
 
-    /* =====================================================
+    console.log(
+      `Material number: ${materialNumber}`
+    );
+
+    console.log(
+      `Category: ${category}`
+    );
+
+    /* =======================================================
        COMPANY
-    ===================================================== */
+    ======================================================= */
 
     const company =
       normalizeValue(
@@ -1124,11 +1254,9 @@ export async function POST(
       ) ||
       "Unknown";
 
-    /* =====================================================
+    /* =======================================================
        MATERIAL PAYLOAD
-       
-       materials primary key = id
-    ===================================================== */
+    ======================================================= */
 
     const materialPayload = {
       company,
@@ -1148,13 +1276,12 @@ export async function POST(
       category,
     };
 
-    /* =====================================================
+    /* =======================================================
        FIND MATERIAL
-    ===================================================== */
+    ======================================================= */
 
     const {
-      data:
-        existingMaterial,
+      data: existingMaterial,
       error:
         materialLookupError,
     } =
@@ -1181,22 +1308,18 @@ export async function POST(
       );
     }
 
-    let material =
-      null;
+    let material = null;
+    let materialCreated = false;
 
-    let materialCreated =
-      false;
-
-    /* =====================================================
+    /* =======================================================
        UPDATE EXISTING MATERIAL
-    ===================================================== */
+    ======================================================= */
 
     if (
       existingMaterial?.id
     ) {
       const {
-        data:
-          updatedMaterial,
+        data: updatedMaterial,
         error:
           materialUpdateError,
       } =
@@ -1233,14 +1356,13 @@ export async function POST(
         updatedMaterial;
     }
 
-    /* =====================================================
+    /* =======================================================
        INSERT NEW MATERIAL
-    ===================================================== */
+    ======================================================= */
 
     else {
       const {
-        data:
-          insertedMaterial,
+        data: insertedMaterial,
         error:
           materialInsertError,
       } =
@@ -1269,9 +1391,7 @@ export async function POST(
         true;
     }
 
-    if (
-      !material?.id
-    ) {
+    if (!material?.id) {
       throw new Error(
         "Material ID was not returned from materials table."
       );
@@ -1284,23 +1404,21 @@ export async function POST(
       `materials.id=${materialsId}`
     );
 
-    /* =====================================================
+    /* =======================================================
        COMPANY MATERIAL
-       
-       material_attributes.material_id
-       references company_materials.material_id
-    ===================================================== */
+    ======================================================= */
 
-    let companyMaterial =
-      null;
+    let companyMaterial = null;
 
-    /* =====================================================
+    /* =======================================================
        FIND BY COMPANY + DATASHEET
-    ===================================================== */
+    ======================================================= */
 
     if (
-      datasheet.company_id !== null &&
-      datasheet.company_id !== undefined
+      datasheet.company_id !==
+        null &&
+      datasheet.company_id !==
+        undefined
     ) {
       const {
         data:
@@ -1337,9 +1455,9 @@ export async function POST(
         existingCompanyMaterial;
     }
 
-    /* =====================================================
+    /* =======================================================
        FIND BY COMPANY MATERIAL CODE
-    ===================================================== */
+    ======================================================= */
 
     if (
       !companyMaterial &&
@@ -1376,13 +1494,11 @@ export async function POST(
         existingByCode;
     }
 
-    /* =====================================================
+    /* =======================================================
        CREATE COMPANY MATERIAL
-    ===================================================== */
+    ======================================================= */
 
-    if (
-      !companyMaterial
-    ) {
+    if (!companyMaterial) {
       const companyMaterialPayload = {
         company_id:
           datasheet.company_id,
@@ -1450,9 +1566,9 @@ export async function POST(
       `company_materials.material_id=${companyMaterialId}`
     );
 
-    /* =====================================================
+    /* =======================================================
        UPDATE COMPANY MATERIAL
-    ===================================================== */
+    ======================================================= */
 
     const {
       error:
@@ -1490,13 +1606,9 @@ export async function POST(
       );
     }
 
-    /* =====================================================
+    /* =======================================================
        MATERIAL ATTRIBUTES
-       
-       No ON CONFLICT is used because
-       material_attributes.material_id is not covered
-       by a unique constraint.
-    ===================================================== */
+    ======================================================= */
 
     const attributePayload = {
       material_id:
@@ -1533,9 +1645,9 @@ export async function POST(
         attributes.other_attributes,
     };
 
-    /* =====================================================
-       FIND EXISTING ATTRIBUTES
-    ===================================================== */
+    /* =======================================================
+       FIND ATTRIBUTES
+    ======================================================= */
 
     const {
       data:
@@ -1564,13 +1676,9 @@ export async function POST(
       );
     }
 
-    /* =====================================================
+    /* =======================================================
        UPDATE ATTRIBUTES
-       
-       IMPORTANT:
-       material_attributes does NOT have updated_at.
-       Therefore updated_at is intentionally NOT included.
-    ===================================================== */
+    ======================================================= */
 
     if (
       existingAttributes
@@ -1626,15 +1734,11 @@ export async function POST(
           `Material attributes update failed: ${attributeUpdateError.message}`
         );
       }
-
-      console.log(
-        `Material attributes updated for company_materials.material_id=${companyMaterialId}`
-      );
     }
 
-    /* =====================================================
+    /* =======================================================
        INSERT ATTRIBUTES
-    ===================================================== */
+    ======================================================= */
 
     else {
       const {
@@ -1656,15 +1760,11 @@ export async function POST(
           `Material attributes insert failed: ${attributeInsertError.message}`
         );
       }
-
-      console.log(
-        `Material attributes inserted for company_materials.material_id=${companyMaterialId}`
-      );
     }
 
-    /* =====================================================
+    /* =======================================================
        EXTRACTION COMPLETE
-    ===================================================== */
+    ======================================================= */
 
     await updateDatasheet(
       adminSupabase,
@@ -1684,9 +1784,9 @@ export async function POST(
       }
     );
 
-    /* =====================================================
-       LOAD ATTRIBUTES FOR EMBEDDING
-    ===================================================== */
+    /* =======================================================
+       LOAD ATTRIBUTES
+    ======================================================= */
 
     const {
       data:
@@ -1727,9 +1827,9 @@ export async function POST(
       );
     }
 
-    /* =====================================================
+    /* =======================================================
        SEARCH TEXT
-    ===================================================== */
+    ======================================================= */
 
     const searchText =
       buildSearchText(
@@ -1745,9 +1845,9 @@ export async function POST(
       );
     }
 
-    /* =====================================================
+    /* =======================================================
        GENERATE EMBEDDING
-    ===================================================== */
+    ======================================================= */
 
     console.log(
       `Generating Gemini embedding for materials.id=${materialsId}...`
@@ -1770,12 +1870,9 @@ export async function POST(
       );
     }
 
-    /* =====================================================
+    /* =======================================================
        SAVE EMBEDDING
-       
-       material_embeddings.material_id
-       references materials.id
-    ===================================================== */
+    ======================================================= */
 
     const {
       error:
@@ -1816,9 +1913,9 @@ export async function POST(
       `Embedding saved using materials.id=${materialsId}`
     );
 
-    /* =====================================================
-       FINAL DATASHEET STATUS
-    ===================================================== */
+    /* =======================================================
+       FINAL STATUS
+    ======================================================= */
 
     await updateDatasheet(
       adminSupabase,
@@ -1838,9 +1935,9 @@ export async function POST(
       }
     );
 
-    /* =====================================================
-       SUCCESS RESPONSE
-    ===================================================== */
+    /* =======================================================
+       SUCCESS
+    ======================================================= */
 
     return NextResponse.json({
       success: true,
@@ -1936,9 +2033,9 @@ export async function POST(
       error
     );
 
-    /* =====================================================
+    /* =======================================================
        FAILURE STATUS
-    ===================================================== */
+    ======================================================= */
 
     if (
       adminSupabase &&

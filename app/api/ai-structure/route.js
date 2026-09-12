@@ -658,132 +658,214 @@ ${text}
 // requests cannot restore a daily free-tier quota.
 // ============================================================
 
-async function generateStructuredData(
-  prompt
-) {
-  let lastError =
-    null;
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
-  for (
-    let attempt = 1;
-    attempt <= 3;
-    attempt++
-  ) {
+function extractJsonFromText(text) {
+  if (!text) return null;
+  const raw = String(text).trim();
+
+  // 1. Direct parse
+  const direct = safeJsonParse(raw);
+  if (direct && typeof direct === "object" && !Array.isArray(direct)) {
+    return direct;
+  }
+
+  // 2. Remove code fences
+  const withoutFences = raw
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  const parsedFences = safeJsonParse(withoutFences);
+  if (parsedFences && typeof parsedFences === "object" && !Array.isArray(parsedFences)) {
+    return parsedFences;
+  }
+
+  // 3. Substring between first { and last }
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const extracted = raw.slice(firstBrace, lastBrace + 1);
+    const parsedBraces = safeJsonParse(extracted);
+    if (parsedBraces && typeof parsedBraces === "object" && !Array.isArray(parsedBraces)) {
+      return parsedBraces;
+    }
+  }
+
+  return null;
+}
+
+function extractDatasheetHeuristic(text) {
+  const cleanText = String(text || "").replace(/\s+/g, " ").trim();
+  const upper = cleanText.toUpperCase();
+  const lower = cleanText.toLowerCase();
+
+  // Detect company
+  let company = "General CPSE";
+  if (upper.includes("BPCL") || upper.includes("BHARAT PETROLEUM")) company = "BPCL";
+  else if (upper.includes("HPCL") || upper.includes("HINDUSTAN PETROLEUM")) company = "HPCL";
+  else if (upper.includes("IOCL") || upper.includes("INDIAN OIL")) company = "IOCL";
+  else if (upper.includes("ONGC") || upper.includes("OIL AND NATURAL GAS")) company = "ONGC";
+  else if (upper.includes("BHEL") || upper.includes("BHARAT HEAVY ELECTRICALS")) company = "BHEL";
+  else if (upper.includes("GAIL")) company = "GAIL";
+  else if (upper.includes("CPCL")) company = "CPCL";
+  else if (upper.includes("NTPC")) company = "NTPC";
+
+  // Detect material number
+  let materialNumber = null;
+  const matNumMatch = cleanText.match(/(?:material\s*(?:no|number|code)|item\s*(?:no|number|code)|part\s*(?:no|number|code))\s*[:#-]?\s*([A-Z0-9._/-]+)/i);
+  if (matNumMatch && matNumMatch[1]) {
+    materialNumber = matNumMatch[1].trim();
+  } else {
+    const codeMatch = cleanText.match(/\b([A-Z]{2,6}-[A-Z0-9-]+)\b/);
+    if (codeMatch && codeMatch[1]) materialNumber = codeMatch[1];
+  }
+
+  // Detect description
+  let description = null;
+  const descMatch = cleanText.match(/(?:material\s*description|description|item\s*name|material\s*name)\s*[:\-]?\s*([^,\n.]{4,150})/i);
+  if (descMatch && descMatch[1]) {
+    description = descMatch[1].trim();
+  } else {
+    description = cleanText.slice(0, 150);
+  }
+
+  // Detect category
+  let category = "Mechanical";
+  if (lower.includes("valve")) category = "Valve";
+  else if (lower.includes("bearing") || lower.includes("housing")) category = "Bearing";
+  else if (lower.includes("pump")) category = "Pump";
+  else if (lower.includes("gasket") || lower.includes("seal")) category = "Sealing";
+  else if (lower.includes("motor") || lower.includes("cable")) category = "Electrical";
+  else if (lower.includes("pipe") || lower.includes("flange")) category = "Piping";
+
+  // Detect pressure class
+  let pressureClass = null;
+  const pressMatch = cleanText.match(/(?:class|#|rating)\s*[:\-]?\s*([0-9]{3,4})/i) || cleanText.match(/([0-9]{3,4})\s*(?:class|#|lb)/i);
+  if (pressMatch && pressMatch[1]) pressureClass = `Class ${pressMatch[1]}`;
+
+  // Detect nominal size
+  let nominalSize = null;
+  const sizeMatch = cleanText.match(/(?:size|nps|nb)\s*[:\-]?\s*([0-9.]+(?:\s*(?:in|inch|mm|"|'|NB|NPS))?)/i);
+  if (sizeMatch && sizeMatch[1]) nominalSize = sizeMatch[1].trim();
+
+  return {
+    company,
+    company_full_name: company,
+    facility: null,
+    product_type: category,
+    material_name: description,
+    description: description,
+    company_material_code: materialNumber,
+    material_family: category,
+    dimensions: {
+      size_range: nominalSize,
+      nominal_size: nominalSize,
+      pressure_class: pressureClass,
+      diameter: null,
+      length: null,
+      width: null,
+      height: null,
+      thickness: null,
+      face_to_face: null,
+      other_dimensions: {},
+    },
+    materials: {
+      body: lower.includes("wcb") ? "ASTM A216 WCB" : (lower.includes("ss316") ? "SS316" : null),
+      bonnet: null,
+      cover: null,
+      disc: null,
+      seat: lower.includes("ptfe") ? "PTFE" : null,
+      stem: null,
+      shaft: null,
+      bolts: null,
+      nuts: null,
+      gasket: null,
+      packing: null,
+      gland: null,
+      handwheel: null,
+      seal: null,
+      other: [],
+    },
+    pressure_rating: pressureClass,
+    temperature_rating: null,
+    end_connections: lower.includes("flange") ? ["Flanged"] : [],
+    standards: [],
+    location: createDefaultLocation(),
+  };
+}
+
+async function generateStructuredData(
+  prompt,
+  datasheetText = ""
+) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       console.log(
-        `AI structure request ${attempt}/3 using ${MODEL_NAME}`
+        `AI structure request ${attempt}/2 using ${MODEL_NAME}`
       );
 
       const response =
-        await ai.models.generateContent(
-          {
-            model:
-              MODEL_NAME,
-
-            contents:
-              prompt,
-
-            config: {
-              responseMimeType:
-                "application/json",
-            },
-          }
-        );
+        await ai.models.generateContent({
+          model: MODEL_NAME,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+          },
+        });
 
       const responseText =
-        response?.text;
+        typeof response?.text === "function"
+          ? response.text()
+          : response?.text || "";
 
-      if (
-        !responseText
-      ) {
-        throw new Error(
-          "AI returned an empty response."
-        );
+      if (!responseText) {
+        throw new Error("AI returned an empty response.");
       }
 
-      let structuredData;
+      const structuredData =
+        extractJsonFromText(responseText);
 
-      try {
-        structuredData =
-          JSON.parse(
-            responseText
-          );
-      } catch (
-        parseError
-      ) {
-        console.error(
-          "AI JSON parsing error:",
-          responseText
+      if (!structuredData) {
+        console.warn(
+          "AI returned non-JSON text, falling back to heuristic:",
+          responseText.slice(0, 200)
         );
-
-        throw new Error(
-          "AI returned invalid JSON."
-        );
+        return extractDatasheetHeuristic(datasheetText);
       }
 
       return structuredData;
-    } catch (
-      error
-    ) {
-      lastError =
-        error;
+    } catch (error) {
+      lastError = error;
+      console.warn(
+        `AI structure attempt ${attempt} warning:`,
+        error?.message || error
+      );
 
-      // --------------------------------------------------------
-      // QUOTA ERROR
-      // --------------------------------------------------------
-
-      if (
-        isQuotaError(
-          error
-        )
-      ) {
-        throw new Error(
-          "Gemini API quota has been exhausted for this project. No more AI requests can be made until the quota resets or the Gemini project is upgraded."
+      if (isQuotaError(error)) {
+        console.warn(
+          "Gemini API quota exhausted. Using deterministic heuristic extraction."
         );
+        return extractDatasheetHeuristic(datasheetText);
       }
 
-      // --------------------------------------------------------
-      // NON-RETRYABLE ERROR
-      // --------------------------------------------------------
-
-      if (
-        !isRetryableServerError(
-          error
-        )
-      ) {
-        throw error;
-      }
-
-      // --------------------------------------------------------
-      // RETRYABLE 503
-      // --------------------------------------------------------
-
-      if (
-        attempt <
-        3
-      ) {
-        const waitTime =
-          attempt === 1
-            ? 2000
-            : 5000;
-
-        console.log(
-          `Gemini temporarily unavailable. Retrying in ${waitTime} ms...`
-        );
-
-        await sleep(
-          waitTime
-        );
+      if (attempt < 2 && isRetryableServerError(error)) {
+        await sleep(1500);
       }
     }
   }
 
-  throw new Error(
-    `Gemini was temporarily unavailable after 3 attempts. Last error: ${
-      lastError?.message ||
-      String(lastError)
-    }`
+  console.warn(
+    "AI structuring unavailable. Falling back to heuristic extractor."
   );
+  return extractDatasheetHeuristic(datasheetText);
 }
 
 // ============================================================
@@ -866,7 +948,8 @@ export async function POST(
 
     const rawStructuredData =
       await generateStructuredData(
-        prompt
+        prompt,
+        datasheetText
       );
 
     // ========================================================
